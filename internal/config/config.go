@@ -1,11 +1,13 @@
 package config
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -62,12 +64,12 @@ func Load() *Config {
 		c.BaseURL = v
 	}
 
-	c.EncryptionKey = loadEncryptionKey()
+	c.EncryptionKey = loadEncryptionKey(c.DataDir)
 
 	return c
 }
 
-func loadEncryptionKey() []byte {
+func loadEncryptionKey(dataDir string) []byte {
 	raw := strings.TrimSpace(os.Getenv("GHVAULT_ENCRYPTION_KEY"))
 
 	if raw == "" {
@@ -81,8 +83,49 @@ func loadEncryptionKey() []byte {
 	}
 
 	if raw == "" {
-		slog.Warn("GHVAULT_ENCRYPTION_KEY not set; encrypted operations unavailable until key is provided via web UI")
-		return nil
+		keyPath := filepath.Join(dataDir, "encryption_key")
+		if data, err := os.ReadFile(keyPath); err == nil {
+			raw = strings.TrimSpace(string(data))
+			if raw != "" {
+				slog.Info("loaded encryption key from file", "path", keyPath)
+			}
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			slog.Error("failed to read encryption key file", "path", keyPath, "error", err)
+			os.Exit(1)
+		}
+	}
+
+	if raw == "" {
+		keyBytes := make([]byte, 32)
+		if _, err := rand.Read(keyBytes); err != nil {
+			slog.Error("failed to generate encryption key", "error", err)
+			os.Exit(1)
+		}
+		raw = base64.StdEncoding.EncodeToString(keyBytes)
+
+		if err := os.MkdirAll(dataDir, 0700); err != nil {
+			slog.Error("failed to create data directory", "path", dataDir, "error", err)
+			os.Exit(1)
+		}
+
+		keyPath := filepath.Join(dataDir, "encryption_key")
+		tmpPath := keyPath + ".tmp"
+		if err := os.WriteFile(tmpPath, []byte(raw+"\n"), 0600); err != nil {
+			slog.Error("failed to write encryption key", "path", tmpPath, "error", err)
+			os.Remove(tmpPath)
+			os.Exit(1)
+		}
+		if err := os.Chmod(tmpPath, 0600); err != nil {
+			slog.Error("failed to chmod encryption key", "path", tmpPath, "error", err)
+			os.Remove(tmpPath)
+			os.Exit(1)
+		}
+		if err := os.Rename(tmpPath, keyPath); err != nil {
+			slog.Error("failed to rename encryption key", "path", keyPath, "error", err)
+			os.Remove(tmpPath)
+			os.Exit(1)
+		}
+		slog.Warn("auto-generated encryption key", "path", keyPath)
 	}
 
 	decoded, err := base64.StdEncoding.DecodeString(raw)
