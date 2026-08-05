@@ -23,7 +23,8 @@ coverage.html
 # Secrets — NEVER commit
 .env
 .envrc
-.env.*
+.env.local
+.env.production
 *.pem
 *.key
 

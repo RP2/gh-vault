@@ -28,7 +28,6 @@ type Server struct {
 	cfg           *config.Config
 	router        *chi.Mux
 	tmpl          *template.Template
-	db            *store.DB
 	users         store.UserStore
 	sessions      store.SessionStore
 	settings      store.SettingsStore
@@ -46,11 +45,15 @@ type Server struct {
 
 func NewServer(
 	cfg *config.Config,
-	db *store.DB,
+	users store.UserStore,
+	settings store.SettingsStore,
+	repos store.RepoStore,
+	logs store.LogStore,
+	secrets store.SecretStore,
+	sessions store.SessionStore,
 	engine backup.Engine,
 	syncer reposync.Syncer,
 	sched scheduler.Scheduler,
-	sessions store.SessionStore,
 	tokenProvider github.TokenProvider,
 	ghClient github.Client,
 ) *Server {
@@ -61,13 +64,12 @@ func NewServer(
 
 	s := &Server{
 		cfg:           cfg,
-		db:            db,
-		users:         db.Users(),
+		users:         users,
 		sessions:      sessions,
-		settings:      db.Settings(),
-		repos:         db.Repos(),
-		logs:          db.Logs(),
-		secrets:       db.Secrets(),
+		settings:      settings,
+		repos:         repos,
+		logs:          logs,
+		secrets:       secrets,
 		engine:        engine,
 		syncer:        syncer,
 		sched:         sched,
