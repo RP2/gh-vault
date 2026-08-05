@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"html/template"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -53,6 +54,11 @@ func NewServer(
 	tokenProvider github.TokenProvider,
 	ghClient github.Client,
 ) *Server {
+	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
+	if err != nil {
+		slog.Error("parse templates", "error", err)
+	}
+
 	s := &Server{
 		cfg:           cfg,
 		db:            db,
@@ -67,6 +73,7 @@ func NewServer(
 		sched:         sched,
 		tokenProvider: tokenProvider,
 		ghClient:      ghClient,
+		tmpl:          tmpl,
 	}
 	s.router = s.setupRouter()
 	return s

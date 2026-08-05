@@ -1,0 +1,49 @@
+{{define "content"}}
+<div class="space-y-6">
+    <h1 class="text-2xl font-bold">Settings</h1>
+
+    {{if eq .Reason "token_missing"}}
+    <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 text-yellow-800">
+        <p class="font-semibold">GitHub token required</p>
+        <p class="text-sm">Please add a valid GitHub personal access token below to enable syncing and backups.</p>
+    </div>
+    {{end}}
+
+    <div class="bg-white p-6 rounded shadow">
+        <h2 class="text-lg font-semibold mb-4">General</h2>
+        <form method="POST" action="/settings" class="space-y-4 max-w-xl">
+            <input type="hidden" name="csrf" value="{{.CSRFToken}}">
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Cron Schedule</label>
+                <input type="text" name="cron_schedule" value="{{.Settings.CronSchedule}}" class="mt-1 w-full border rounded px-3 py-2">
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="checkbox" name="dry_run" value="on" id="dry_run" {{if .Settings.DryRun}}checked{{end}}>
+                <label for="dry_run" class="text-sm font-medium text-gray-700">Dry Run</label>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Auto-archive Days</label>
+                <input type="number" name="auto_archive_days" value="{{.Settings.AutoArchiveDays}}" class="mt-1 w-full border rounded px-3 py-2">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Log Retention Days</label>
+                <input type="number" name="log_retention_days" value="{{.Settings.LogRetentionDays}}" class="mt-1 w-full border rounded px-3 py-2">
+            </div>
+            <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Save Settings</button>
+        </form>
+    </div>
+
+    <div class="bg-white p-6 rounded shadow">
+        <h2 class="text-lg font-semibold mb-4">GitHub Token</h2>
+        <p class="text-sm text-gray-500 mb-4">Token status is checked on the settings page.</p>
+        <form method="POST" action="/settings/token" class="space-y-4 max-w-xl">
+            <input type="hidden" name="csrf" value="{{.CSRFToken}}">
+            <div>
+                <label class="block text-sm font-medium text-gray-700">New Token</label>
+                <input type="password" name="token" class="mt-1 w-full border rounded px-3 py-2">
+            </div>
+            <button type="submit" class="bg-gray-800 text-white px-4 py-2 rounded hover:bg-gray-900">Save Token</button>
+        </form>
+    </div>
+</div>
+{{end}}

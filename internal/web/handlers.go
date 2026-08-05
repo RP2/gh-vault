@@ -39,6 +39,14 @@ func parseRepoID(r *http.Request) (int64, error) {
 	return id, nil
 }
 
+// csrfToken returns the CSRF token for the current session, if any.
+func (s *Server) csrfToken(r *http.Request) string {
+	if session := s.getSession(r); session != nil {
+		return session.CSRFToken
+	}
+	return ""
+}
+
 // renderTemplate executes the named template and returns 500 on error.
 func (s *Server) renderTemplate(w http.ResponseWriter, r *http.Request, name string, data any) {
 	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
@@ -95,7 +103,9 @@ func background() (context.Context, context.CancelFunc) {
 // Setup Wizard
 
 func (s *Server) handleSetupGet(w http.ResponseWriter, r *http.Request) {
-	s.renderTemplate(w, r, "setup.html", nil)
+	s.renderTemplate(w, r, "setup.html", map[string]string{
+		"CSRFToken": s.csrfToken(r),
+	})
 }
 
 func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
@@ -104,14 +114,15 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	username := strings.TrimSpace(r.FormValue("username"))
-	password := r.FormValue("password")
-	if username == "" || len(password) < 8 {
-		s.renderTemplate(w, r, "setup.html", map[string]string{
-			"Error": "username is required and password must be at least 8 characters",
-		})
-		return
-	}
+		username := strings.TrimSpace(r.FormValue("username"))
+		password := r.FormValue("password")
+		if username == "" || len(password) < 8 {
+			s.renderTemplate(w, r, "setup.html", map[string]string{
+				"Error":     "username is required and password must be at least 8 characters",
+				"CSRFToken": s.csrfToken(r),
+			})
+			return
+		}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	if err != nil {
@@ -125,7 +136,8 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 		slog.Error("create user", "username", username, "error", err)
 		if errors.Is(err, store.ErrUsernameExists) {
 			s.renderTemplate(w, r, "setup.html", map[string]string{
-				"Error": "username already exists",
+				"Error":     "username already exists",
+				"CSRFToken": s.csrfToken(r),
 			})
 			return
 		}
@@ -146,7 +158,8 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLoginGet(w http.ResponseWriter, r *http.Request) {
 	s.renderTemplate(w, r, "login.html", map[string]string{
-		"Error": r.URL.Query().Get("error"),
+		"Error":     r.URL.Query().Get("error"),
+		"CSRFToken": s.csrfToken(r),
 	})
 }
 
@@ -219,11 +232,13 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		LogCount    int
 		SyncRunning bool
 		NextSync    time.Time
+		CSRFToken   string
 	}{
 		RepoCount:   len(repos),
 		LogCount:    len(logs),
 		SyncRunning: s.sched.IsRunning("sync"),
 		NextSync:    s.sched.NextRun("sync"),
+		CSRFToken:   s.csrfToken(r),
 	}
 
 	s.renderTemplate(w, r, "dashboard.html", data)
@@ -238,7 +253,14 @@ func (s *Server) handleReposList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	s.renderTemplate(w, r, "repos.html", repos)
+	data := struct {
+		CSRFToken string
+		Repos     []model.Repo
+	}{
+		CSRFToken: s.csrfToken(r),
+		Repos:     repos,
+	}
+	s.renderTemplate(w, r, "repos.html", data)
 }
 
 func (s *Server) handleRepoSwitch(w http.ResponseWriter, r *http.Request) {
@@ -599,13 +621,19 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := struct {
-		Logs []model.LogEntry
-		Page int
-		Size int
+		Logs      []model.LogEntry
+		Page      int
+		Size      int
+		PrevPage  int
+		NextPage  int
+		CSRFToken string
 	}{
-		Logs: pageEntries,
-		Page: page,
-		Size: size,
+		Logs:      pageEntries,
+		Page:      page,
+		Size:      size,
+		PrevPage:  page - 1,
+		NextPage:  page + 1,
+		CSRFToken: s.csrfToken(r),
 	}
 
 	s.renderTemplate(w, r, "logs.html", data)
@@ -622,11 +650,13 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := struct {
-		Settings model.Settings
-		Reason   string
+		Settings  model.Settings
+		Reason    string
+		CSRFToken string
 	}{
-		Settings: settings,
-		Reason:   r.URL.Query().Get("reason"),
+		Settings:  settings,
+		Reason:    r.URL.Query().Get("reason"),
+		CSRFToken: s.csrfToken(r),
 	}
 
 	s.renderTemplate(w, r, "settings.html", data)
