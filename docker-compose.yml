@@ -3,6 +3,7 @@ services:
     build: .
     container_name: gh-vault
     restart: unless-stopped
+    user: "568:568"  # TrueNAS SCALE apps user
     env_file: .env
     ports:
       - "8090:8090"
