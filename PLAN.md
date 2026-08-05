@@ -6,7 +6,7 @@ A lean Go application that runs in Docker on TrueNAS, backs up your GitHub repos
 
 | Layer       | Choice                                          | Why                                                                                                                                   |
 | ----------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Language    | **Go 1.23** (pinned)                            | Single static binary, ~15MB Alpine Docker image, no CGO                                                                               |
+| Language    | **Go 1.26** (pinned)                            | Single static binary, ~15MB Alpine Docker image, no CGO                                                                               |
 | GitHub API  | `google/go-github/v69`                          | Official client. Rate limit handling is manual (check `RateLimits`, respect `Retry-After`)                                            |
 | Scheduling  | `robfig/cron/v3`                                | Standard cron syntax, zero deps, battle-tested                                                                                        |
 | Database    | `modernc.org/sqlite` (pure Go)                  | Embedded SQLite, no CGO, WAL mode                                                                                                     |
@@ -18,7 +18,7 @@ A lean Go application that runs in Docker on TrueNAS, backs up your GitHub repos
 | Concurrency | `golang.org/x/sync/errgroup`                    | Fan-out backup jobs with error collection                                                                                             |
 | Rate limit  | `golang.org/x/time/rate`                        | Login rate limiting (5 attempts/min per IP)                                                                                           |
 
-**Module path**: `github.com/riley/gh-vault` — this MUST match the actual GitHub repository path. If the repo is created under a different org/user, update `go.mod` and all internal imports accordingly.
+**Module path**: `github.com/RP2/gh-vault` — this MUST match the actual GitHub repository path. If the repo is created under a different org/user, update `go.mod` and all internal imports accordingly.
 
 ## Architecture
 
@@ -433,12 +433,12 @@ Routes:
 ### Phase 1: Scaffolding and Docker
 
 - Initialize Go module (path must match actual GitHub repo — see Tech Stack note)
-- `go.mod` with Go 1.23 pin
+- `go.mod` with Go 1.26 pin
 - `main.go` skeleton: config load, HTTP server with timeouts (`ReadTimeout: 15s`, `WriteTimeout: 30s`, `IdleTimeout: 60s`, `ReadHeaderTimeout: 5s`), graceful shutdown (SIGTERM/SIGINT)
 - `internal/config/config.go`: load from env vars (see Env Var Table). Reads `GHVAULT_ENCRYPTION_KEY` from env or from file `/run/secrets/encryption_key` (Docker secret). Both sources are base64-decoded to raw 32 bytes.
 - `Dockerfile` (multi-stage):
   ```dockerfile
-  FROM golang:1.23-alpine AS build
+  FROM golang:1.26-alpine AS build
   WORKDIR /src && COPY go.mod go.sum ./ && RUN go mod download && COPY . .
   RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /gh-vault .
   FROM alpine:3.20

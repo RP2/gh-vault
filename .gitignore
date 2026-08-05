@@ -1,1 +1,45 @@
 .adversarial/
+
+# Vendor (reproducible via go mod vendor, pinned in go.sum)
+vendor/
+
+# Build artifacts
+/bin/
+/dist/
+gh-vault
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test/coverage
+*.test
+*.out
+coverage.out
+coverage.html
+*.cover
+
+# Secrets — NEVER commit
+.env
+.envrc
+.env.*
+*.pem
+*.key
+
+# Vendored AI instruction files (agent prompt injection risk)
+vendor/**/CLAUDE.md
+vendor/**/GEMINI.md
+
+# Editor/OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Go workspace
+go.work
+go.work.sum
