@@ -10,9 +10,9 @@ import (
 )
 
 func TestTemplatesRender(t *testing.T) {
-	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
+	base, err := template.ParseFS(templateFS, "templates/layout.html")
 	if err != nil {
-		t.Fatalf("parse templates: %v", err)
+		t.Fatalf("parse layout: %v", err)
 	}
 
 	cases := map[string]any{
@@ -49,8 +49,17 @@ func TestTemplatesRender(t *testing.T) {
 	}
 
 	for name, data := range cases {
+		tmpl, err := base.Clone()
+		if err != nil {
+			t.Errorf("clone for %s: %v", name, err)
+			continue
+		}
+		if _, err := tmpl.ParseFS(templateFS, "templates/"+name); err != nil {
+			t.Errorf("parse %s: %v", name, err)
+			continue
+		}
 		var buf bytes.Buffer
-		if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
+		if err := tmpl.ExecuteTemplate(&buf, "layout", data); err != nil {
 			t.Errorf("render %s: %v", name, err)
 		}
 	}

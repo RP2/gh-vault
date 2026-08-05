@@ -3,8 +3,8 @@ package web
 import (
 	"context"
 	"embed"
+	"fmt"
 	"html/template"
-	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -56,10 +56,10 @@ func NewServer(
 	sched scheduler.Scheduler,
 	tokenProvider github.TokenProvider,
 	ghClient github.Client,
-) *Server {
-	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
+) (*Server, error) {
+	tmpl, err := template.ParseFS(templateFS, "templates/layout.html")
 	if err != nil {
-		slog.Error("parse templates", "error", err)
+		return nil, fmt.Errorf("web: parse layout template: %w", err)
 	}
 
 	s := &Server{
@@ -78,7 +78,7 @@ func NewServer(
 		tmpl:          tmpl,
 	}
 	s.router = s.setupRouter()
-	return s
+	return s, nil
 }
 
 func (s *Server) setupRouter() *chi.Mux {

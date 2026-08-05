@@ -37,7 +37,12 @@ func main() {
 	archiveWorkflow := workflow.NewArchive(db.Repos(), db.Logs(), db.Settings(), ghClient)
 	sessions := db.Sessions()
 	sched := scheduler.New(db.Settings(), syncer, backupEngine, db.Repos(), db.Logs(), sessions, archiveWorkflow)
-	srv := web.NewServer(cfg, db.Users(), db.Settings(), db.Repos(), db.Logs(), db.Secrets(), sessions, backupEngine, syncer, sched, tokenProvider, ghClient)
+	srv, err := web.NewServer(cfg, db.Users(), db.Settings(), db.Repos(), db.Logs(), db.Secrets(), sessions, backupEngine, syncer, sched, tokenProvider, ghClient)
+	if err != nil {
+		slog.Error("failed to create web server", "error", err)
+		db.Close()
+		os.Exit(1)
+	}
 
 	if err := sched.Start(); err != nil {
 		slog.Error("failed to start scheduler", "error", err)

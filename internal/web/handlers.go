@@ -47,9 +47,20 @@ func (s *Server) csrfToken(r *http.Request) string {
 	return ""
 }
 
-// renderTemplate executes the named template and returns 500 on error.
-func (s *Server) renderTemplate(w http.ResponseWriter, r *http.Request, name string, data any) {
-	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
+// renderTemplate clones the layout, parses the page template, and renders via "layout".
+func (s *Server) renderTemplate(w http.ResponseWriter, name string, data any) {
+	t, err := s.tmpl.Clone()
+	if err != nil {
+		slog.Error("clone template", "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if _, err := t.ParseFS(templateFS, "templates/"+name); err != nil {
+		slog.Error("parse template", "template", name, "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if err := t.ExecuteTemplate(w, "layout", data); err != nil {
 		slog.Error("render template", "template", name, "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
@@ -103,7 +114,7 @@ func background() (context.Context, context.CancelFunc) {
 // Setup Wizard
 
 func (s *Server) handleSetupGet(w http.ResponseWriter, r *http.Request) {
-	s.renderTemplate(w, r, "setup.html", map[string]string{
+	s.renderTemplate(w, "setup.html", map[string]string{
 		"CSRFToken": s.csrfToken(r),
 	})
 }
@@ -117,7 +128,7 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 		username := strings.TrimSpace(r.FormValue("username"))
 		password := r.FormValue("password")
 		if username == "" || len(password) < 8 {
-			s.renderTemplate(w, r, "setup.html", map[string]string{
+			s.renderTemplate(w, "setup.html", map[string]string{
 				"Error":     "username is required and password must be at least 8 characters",
 				"CSRFToken": s.csrfToken(r),
 			})
@@ -135,7 +146,7 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("create user", "username", username, "error", err)
 		if errors.Is(err, store.ErrUsernameExists) {
-			s.renderTemplate(w, r, "setup.html", map[string]string{
+			s.renderTemplate(w, "setup.html", map[string]string{
 				"Error":     "username already exists",
 				"CSRFToken": s.csrfToken(r),
 			})
@@ -157,7 +168,7 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 // Auth
 
 func (s *Server) handleLoginGet(w http.ResponseWriter, r *http.Request) {
-	s.renderTemplate(w, r, "login.html", map[string]string{
+	s.renderTemplate(w, "login.html", map[string]string{
 		"Error":     r.URL.Query().Get("error"),
 		"CSRFToken": s.csrfToken(r),
 	})
@@ -241,7 +252,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		CSRFToken:   s.csrfToken(r),
 	}
 
-	s.renderTemplate(w, r, "dashboard.html", data)
+	s.renderTemplate(w, "dashboard.html", data)
 }
 
 // Repos
@@ -260,7 +271,7 @@ func (s *Server) handleReposList(w http.ResponseWriter, r *http.Request) {
 		CSRFToken: s.csrfToken(r),
 		Repos:     repos,
 	}
-	s.renderTemplate(w, r, "repos.html", data)
+	s.renderTemplate(w, "repos.html", data)
 }
 
 func (s *Server) handleRepoSwitch(w http.ResponseWriter, r *http.Request) {
@@ -636,7 +647,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		CSRFToken: s.csrfToken(r),
 	}
 
-	s.renderTemplate(w, r, "logs.html", data)
+	s.renderTemplate(w, "logs.html", data)
 }
 
 // Settings
@@ -659,7 +670,7 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 		CSRFToken: s.csrfToken(r),
 	}
 
-	s.renderTemplate(w, r, "settings.html", data)
+	s.renderTemplate(w, "settings.html", data)
 }
 
 func (s *Server) handleSettingsPost(w http.ResponseWriter, r *http.Request) {
