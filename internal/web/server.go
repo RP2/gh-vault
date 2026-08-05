@@ -5,7 +5,10 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
+	"mime"
 	"net/http"
+	"path/filepath"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -92,7 +95,7 @@ func (s *Server) setupRouter() *chi.Mux {
 	r.Use(s.csrfMiddleware)
 
 	// Static files
-	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	r.Handle("/static/*", http.StripPrefix("/static/", s.staticFileHandler()))
 
 	// Health check (no auth)
 	r.Get("/healthz", s.handleHealthz)
@@ -151,5 +154,22 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok"}`))
+}
+
+func (s *Server) staticFileHandler() http.Handler {
+	fs := http.FS(staticFS)
+	fileServer := http.FileServer(fs)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ext := filepath.Ext(r.URL.Path)
+		if ct := mime.TypeByExtension(ext); ct != "" {
+			w.Header().Set("Content-Type", ct)
+		}
+		// Prevent directory listing
+		if strings.HasSuffix(r.URL.Path, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		fileServer.ServeHTTP(w, r)
+	})
 }
 
