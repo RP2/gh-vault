@@ -637,6 +637,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		Size      int
 		PrevPage  int
 		NextPage  int
+		HasNext   bool
 		CSRFToken string
 	}{
 		Logs:      pageEntries,
@@ -644,6 +645,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		Size:      size,
 		PrevPage:  page - 1,
 		NextPage:  page + 1,
+		HasNext:   len(entries) == total,
 		CSRFToken: s.csrfToken(r),
 	}
 

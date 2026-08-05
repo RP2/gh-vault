@@ -35,10 +35,11 @@ func TestTemplatesRender(t *testing.T) {
 			Size      int
 			PrevPage  int
 			NextPage  int
+			HasNext   bool
 			CSRFToken string
 		}{Logs: []model.LogEntry{
 			{ID: 1, RepoID: 1, Action: "backup", Status: "success", Message: "ok", CreatedAt: time.Now()},
-		}, Page: 1, Size: 50, PrevPage: 0, NextPage: 2, CSRFToken: "abc"},
+		}, Page: 1, Size: 50, PrevPage: 0, NextPage: 2, HasNext: true, CSRFToken: "abc"},
 		"settings.html": struct {
 			Settings  model.Settings
 			Reason    string

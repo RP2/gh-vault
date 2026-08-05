@@ -4,3 +4,11 @@ document.addEventListener('htmx:configRequest', function(e) {
         e.detail.headers['X-CSRF-Token'] = token.getAttribute('content');
     }
 });
+
+document.addEventListener('submit', function(e) {
+    var form = e.target;
+    var msg = form.getAttribute('data-confirm');
+    if (msg && !confirm(msg)) {
+        e.preventDefault();
+    }
+});

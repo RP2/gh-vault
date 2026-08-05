@@ -1,32 +1,29 @@
 {{define "content"}}
-<div class="space-y-6">
-    <h1 class="text-2xl font-bold">Dashboard</h1>
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div class="bg-white p-4 rounded shadow">
-            <div class="text-sm text-gray-500">Repos</div>
-            <div class="text-2xl font-bold">{{.RepoCount}}</div>
-        </div>
-        <div class="bg-white p-4 rounded shadow">
-            <div class="text-sm text-gray-500">Logs</div>
-            <div class="text-2xl font-bold">{{.LogCount}}</div>
-        </div>
-        <div class="bg-white p-4 rounded shadow">
-            <div class="text-sm text-gray-500">Sync Status</div>
-            <div class="text-2xl font-bold">
-                {{if .SyncRunning}}<span class="text-green-600">Running</span>{{else}}<span class="text-gray-600">Idle</span>{{end}}
-            </div>
-        </div>
-        <div class="bg-white p-4 rounded shadow">
-            <div class="text-sm text-gray-500">Next Sync</div>
-            <div class="text-2xl font-bold">{{.NextSync.Format "2006-01-02 15:04:05"}}</div>
-        </div>
+<section class="stats-grid">
+    <article class="card stat-card">
+        <p class="stat-label">Repos</p>
+        <p class="stat-value">{{.RepoCount}}</p>
+    </article>
+    <article class="card stat-card">
+        <p class="stat-label">Logs</p>
+        <p class="stat-value">{{.LogCount}}</p>
+    </article>
+    <article class="card stat-card">
+        <p class="stat-label">Sync Status</p>
+        <p class="stat-value">
+            {{if .SyncRunning}}<span class="badge badge-success">Running</span>{{else}}<span class="badge badge-neutral">Idle</span>{{end}}
+        </p>
+    </article>
+    <article class="card stat-card">
+        <p class="stat-label">Next Sync</p>
+        <p class="stat-value">{{.NextSync.Format "2006-01-02 15:04:05"}}</p>
+    </article>
+</section>
+<section class="card">
+    <h2>Quick Actions</h2>
+    <div class="actions">
+        <button hx-post="/trigger/sync" hx-swap="none" class="btn btn-primary">Trigger Sync</button>
+        <button hx-post="/trigger/backup" hx-swap="none" class="btn btn-neutral">Trigger Backup</button>
     </div>
-    <div class="bg-white p-4 rounded shadow">
-        <h2 class="text-lg font-semibold mb-3">Quick Actions</h2>
-        <div class="flex gap-3">
-            <button hx-post="/trigger/sync" hx-swap="none" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Trigger Sync</button>
-            <button hx-post="/trigger/backup" hx-swap="none" class="bg-gray-800 text-white px-4 py-2 rounded hover:bg-gray-900">Trigger Backup</button>
-        </div>
-    </div>
-</div>
+</section>
 {{end}}

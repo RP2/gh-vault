@@ -1,47 +1,50 @@
 {{define "content"}}
-<div class="space-y-4">
-    <h1 class="text-2xl font-bold">Repositories</h1>
+<section>
+    <h1>Repositories</h1>
     {{if .Repos}}
-    <div class="bg-white rounded shadow overflow-x-auto">
-        <table class="w-full text-sm text-left">
-            <thead class="bg-gray-100 text-gray-700">
+    <div class="table-wrapper">
+        <table class="table">
+            <thead>
                 <tr>
-                    <th class="px-4 py-3">Name</th>
-                    <th class="px-4 py-3">Owner</th>
-                    <th class="px-4 py-3">Format</th>
-                    <th class="px-4 py-3">Last Backup</th>
-                    <th class="px-4 py-3">Status</th>
-                    <th class="px-4 py-3">Actions</th>
+                    <th>Name</th>
+                    <th>Owner</th>
+                    <th>Format</th>
+                    <th>Last Backup</th>
+                    <th>Status</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
-            <tbody class="divide-y">
+            <tbody>
                 {{range .Repos}}
-                <tr class="hover:bg-gray-50">
-                    <td class="px-4 py-3 font-medium">{{.Name}}</td>
-                    <td class="px-4 py-3">{{.Owner}}</td>
-                    <td class="px-4 py-3">{{.Format}}</td>
-                    <td class="px-4 py-3">
+                <tr>
+                    <td><strong>{{.Name}}</strong></td>
+                    <td>{{.Owner}}</td>
+                    <td>{{.Format}}</td>
+                    <td>
                         {{if .LastBackup}}{{.LastBackup.Format "2006-01-02 15:04:05"}}{{else}}-{{end}}
                     </td>
-                    <td class="px-4 py-3">
-                        {{if .GitHubDeleted}}<span class="text-red-600">Deleted</span>{{else if .GitHubArchived}}<span class="text-yellow-600">Archived</span>{{else}}<span class="text-green-600">Active</span>{{end}}
+                    <td>
+                        {{if .GitHubDeleted}}
+                        <span class="badge badge-error">Deleted</span>
+                        {{else if .GitHubArchived}}
+                        <span class="badge badge-warning">Archived</span>
+                        {{else}}
+                        <span class="badge badge-success">Active</span>
+                        {{end}}
                     </td>
-                    <td class="px-4 py-3">
-                        <div class="flex flex-wrap gap-2">
-                            <button hx-post="/repos/{{.ID}}/switch" hx-swap="none" class="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300">Switch Format</button>
-                            <button hx-post="/repos/{{.ID}}/archive" hx-swap="none" class="px-3 py-1 rounded bg-yellow-100 hover:bg-yellow-200 text-yellow-800">Archive</button>
-                            <button hx-post="/repos/{{.ID}}/backup" hx-swap="none" class="px-3 py-1 rounded bg-blue-100 hover:bg-blue-200 text-blue-800">Backup</button>
-                            <form method="POST" action="/repos/{{.ID}}/auto-archive" class="inline" hx-post="/repos/{{.ID}}/auto-archive" hx-swap="none">
+                    <td>
+                        <div class="actions">
+                            <button hx-post="/repos/{{.ID}}/switch" hx-swap="none" class="btn btn-small btn-neutral">Switch Format</button>
+                            <button hx-post="/repos/{{.ID}}/archive" hx-swap="none" class="btn btn-small btn-warning">Archive</button>
+                            <button hx-post="/repos/{{.ID}}/backup" hx-swap="none" class="btn btn-small btn-primary">Backup</button>
+                            <label class="form-check">
+                                <input type="checkbox" name="auto_archive" value="on" {{if .AutoArchive}}checked{{end}} hx-post="/repos/{{.ID}}/auto-archive" hx-swap="none" hx-trigger="change">
+                                <span>Auto-archive</span>
+                            </label>
+                            <form method="POST" action="/repos/{{.ID}}/delete" class="danger-form" data-confirm="Delete repository {{.Name}}? Type the name to confirm.">
                                 <input type="hidden" name="csrf" value="{{$.CSRFToken}}">
-                                <label class="inline-flex items-center gap-2 px-3 py-1 rounded bg-gray-100 cursor-pointer">
-                                    <input type="checkbox" name="auto_archive" value="on" {{if .AutoArchive}}checked{{end}} onchange="this.form.submit()">
-                                    <span>Auto-archive</span>
-                                </label>
-                            </form>
-                            <form method="POST" action="/repos/{{.ID}}/delete" class="inline" onsubmit="return confirm('Delete repository {{.Name}}? Type the name in the confirmation field below.')">
-                                <input type="hidden" name="csrf" value="{{$.CSRFToken}}">
-                                <input type="text" name="name" placeholder="name to confirm" class="px-2 py-1 text-xs border rounded w-32">
-                                <button type="submit" class="px-3 py-1 rounded bg-red-100 hover:bg-red-200 text-red-800">Delete</button>
+                                <input type="text" name="name" placeholder="name to confirm" class="confirm-input">
+                                <button type="submit" class="btn btn-small btn-danger">Delete</button>
                             </form>
                         </div>
                     </td>
@@ -51,7 +54,7 @@
         </table>
     </div>
     {{else}}
-    <p class="text-gray-500">No repositories found.</p>
+    <p class="empty">No repositories found.</p>
     {{end}}
-</div>
+</section>
 {{end}}
