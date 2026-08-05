@@ -3,8 +3,12 @@ module github.com/RP2/gh-vault
 go 1.26.5
 
 require (
+	github.com/go-chi/chi/v5 v5.3.1
 	github.com/google/go-github/v69 v69.2.0
+	github.com/robfig/cron/v3 v3.0.1
+	golang.org/x/crypto v0.54.0
 	golang.org/x/oauth2 v0.36.0
+	golang.org/x/sync v0.21.0
 	modernc.org/sqlite v1.56.0
 )
 
