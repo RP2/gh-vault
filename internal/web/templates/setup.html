@@ -3,11 +3,12 @@
     <div class="card">
         <h1>Setup gh-vault</h1>
         {{if .Error}}
-        <div class="alert alert-error" role="alert">
+        <div class="alert" role="alert">
             {{.Error}}
         </div>
         {{end}}
         <form method="POST" action="/setup">
+            <input type="hidden" name="csrf" value="{{.CSRFToken}}">
             <div class="form-group">
                 <label for="username">Username</label>
                 <input type="text" id="username" name="username" required>
@@ -16,7 +17,7 @@
                 <label for="password">Password</label>
                 <input type="password" id="password" name="password" required minlength="8">
             </div>
-            <button type="submit" class="btn btn-primary btn-block">Create Account</button>
+            <button type="submit">Create Account</button>
         </form>
     </div>
 </section>

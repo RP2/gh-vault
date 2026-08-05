@@ -1,29 +1,11 @@
 {{define "content"}}
-<section class="stats-grid">
-    <article class="card stat-card">
-        <p class="stat-label">Repos</p>
-        <p class="stat-value">{{.RepoCount}}</p>
-    </article>
-    <article class="card stat-card">
-        <p class="stat-label">Logs</p>
-        <p class="stat-value">{{.LogCount}}</p>
-    </article>
-    <article class="card stat-card">
-        <p class="stat-label">Sync Status</p>
-        <p class="stat-value">
-            {{if .SyncRunning}}<span class="badge badge-success">Running</span>{{else}}<span class="badge badge-neutral">Idle</span>{{end}}
-        </p>
-    </article>
-    <article class="card stat-card">
-        <p class="stat-label">Next Sync</p>
-        <p class="stat-value">{{.NextSync.Format "2006-01-02 15:04:05"}}</p>
-    </article>
-</section>
-<section class="card">
-    <h2>Quick Actions</h2>
-    <div class="actions">
-        <button hx-post="/trigger/sync" hx-swap="none" class="btn btn-primary">Trigger Sync</button>
-        <button hx-post="/trigger/backup" hx-swap="none" class="btn btn-neutral">Trigger Backup</button>
-    </div>
-</section>
+<h1>Dashboard</h1>
+<p>Repositories: {{.RepoCount}}</p>
+<p>Logs: {{.LogCount}}</p>
+<p>Sync: {{if .SyncRunning}}<span class="badge">Running</span>{{else}}<span class="badge">Idle</span>{{end}}</p>
+<p>Next Sync: {{if .NextSync.IsZero}}<span class="badge">never</span>{{else}}{{.NextSync.Format "2006-01-02 15:04:05"}}{{end}}</p>
+<p>
+    <button hx-post="/trigger/sync" hx-swap="none" hx-disabled-elt="this">Trigger Sync</button>
+    <button hx-post="/trigger/backup" hx-swap="none" hx-disabled-elt="this">Trigger Backup</button>
+</p>
 {{end}}

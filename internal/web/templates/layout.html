@@ -12,23 +12,16 @@
 </head>
 <body>
     {{if .CSRFToken}}
-    <header class="site-header">
-        <nav class="nav-bar" aria-label="Main">
-            <a class="nav-brand" href="/">gh-vault</a>
-            <ul class="nav-links">
-                <li><a href="/">Dashboard</a></li>
-                <li><a href="/repos">Repos</a></li>
-                <li><a href="/logs">Logs</a></li>
-                <li><a href="/settings">Settings</a></li>
-                <li>
-                    <form method="POST" action="/logout">
-                        <input type="hidden" name="csrf" value="{{.CSRFToken}}">
-                        <button type="submit">Logout</button>
-                    </form>
-                </li>
-            </ul>
-        </nav>
-    </header>
+    <nav class="nav" aria-label="Main">
+        <a href="/">gh-vault</a>
+        <a href="/repos">Repos</a>
+        <a href="/logs">Logs</a>
+        <a href="/settings">Settings</a>
+        <form method="POST" action="/logout">
+            <input type="hidden" name="csrf" value="{{.CSRFToken}}">
+            <button type="submit">Logout</button>
+        </form>
+    </nav>
     {{end}}
     <main>
         {{template "content" .}}

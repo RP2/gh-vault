@@ -20,33 +20,34 @@
                     <td><strong>{{.Name}}</strong></td>
                     <td>{{.Owner}}</td>
                     <td>{{.Format}}</td>
-                    <td>
-                        {{if .LastBackup}}{{.LastBackup.Format "2006-01-02 15:04:05"}}{{else}}-{{end}}
-                    </td>
+                    <td>{{if .LastBackup}}{{.LastBackup.Format "2006-01-02 15:04:05"}}{{else}}-{{end}}</td>
                     <td>
                         {{if .GitHubDeleted}}
-                        <span class="badge badge-error">Deleted</span>
+                        <span class="badge">Deleted</span>
                         {{else if .GitHubArchived}}
-                        <span class="badge badge-warning">Archived</span>
+                        <span class="badge">Archived</span>
                         {{else}}
-                        <span class="badge badge-success">Active</span>
+                        <span class="badge">Active</span>
                         {{end}}
                     </td>
                     <td>
-                        <div class="actions">
-                            <button hx-post="/repos/{{.ID}}/switch" hx-swap="none" class="btn btn-small btn-neutral">Switch Format</button>
-                            <button hx-post="/repos/{{.ID}}/archive" hx-swap="none" class="btn btn-small btn-warning">Archive</button>
-                            <button hx-post="/repos/{{.ID}}/backup" hx-swap="none" class="btn btn-small btn-primary">Backup</button>
-                            <label class="form-check">
-                                <input type="checkbox" name="auto_archive" value="on" {{if .AutoArchive}}checked{{end}} hx-post="/repos/{{.ID}}/auto-archive" hx-swap="none" hx-trigger="change">
-                                <span>Auto-archive</span>
-                            </label>
-                            <form method="POST" action="/repos/{{.ID}}/delete" class="danger-form" data-confirm="Delete repository {{.Name}}? Type the name to confirm.">
-                                <input type="hidden" name="csrf" value="{{$.CSRFToken}}">
-                                <input type="text" name="name" placeholder="name to confirm" class="confirm-input">
-                                <button type="submit" class="btn btn-small btn-danger">Delete</button>
-                            </form>
+                        <div class="row">
+                            <button hx-post="/repos/{{.ID}}/switch" hx-swap="none">Switch Format</button>
+                            <button hx-post="/repos/{{.ID}}/archive">Archive</button>
+                            <button hx-post="/repos/{{.ID}}/backup">Backup</button>
                         </div>
+                        <label for="auto_archive_{{.ID}}">
+                            <input type="checkbox" id="auto_archive_{{.ID}}" name="auto_archive" value="on" {{if .AutoArchive}}checked{{end}} hx-post="/repos/{{.ID}}/auto-archive" hx-trigger="change">
+                            Auto-archive
+                        </label>
+                        <form method="POST" action="/repos/{{.ID}}/delete" data-confirm="Delete repository {{.Name}}? This action requires typing the name on the next screen.">
+                            <input type="hidden" name="csrf" value="{{$.CSRFToken}}">
+                            <div class="form-group">
+                                <label for="delete_name_{{.ID}}">Type {{.Name}} to confirm</label>
+                                <input type="text" id="delete_name_{{.ID}}" name="name" placeholder="name to confirm" required>
+                            </div>
+                            <button type="submit">Delete</button>
+                        </form>
                     </td>
                 </tr>
                 {{end}}
@@ -54,7 +55,7 @@
         </table>
     </div>
     {{else}}
-    <p class="empty">No repositories found.</p>
+    <p>No repositories found.</p>
     {{end}}
 </section>
 {{end}}

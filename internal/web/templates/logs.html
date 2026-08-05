@@ -16,16 +16,16 @@
             <tbody>
                 {{range .Logs}}
                 <tr>
-                    <td class="nowrap">{{.CreatedAt.Format "2006-01-02 15:04:05"}}</td>
+                    <td>{{.CreatedAt.Format "2006-01-02 15:04:05"}}</td>
                     <td>{{.RepoID}}</td>
                     <td>{{.Action}}</td>
                     <td>
                         {{if eq .Status "success"}}
-                        <span class="badge badge-success">{{.Status}}</span>
+                        <span class="badge">success</span>
                         {{else if eq .Status "error"}}
-                        <span class="badge badge-error">{{.Status}}</span>
+                        <span class="badge">error</span>
                         {{else}}
-                        <span class="badge badge-neutral">{{.Status}}</span>
+                        <span class="badge">{{.Status}}</span>
                         {{end}}
                     </td>
                     <td>{{.Message}}</td>
@@ -34,23 +34,23 @@
             </tbody>
         </table>
     </div>
-    <nav class="pagination" aria-label="Pagination">
-        <p class="info">Page {{.Page}} · {{.Size}} per page</p>
-        <div class="actions">
+    <nav aria-label="Pagination">
+        <p>Page {{.Page}} · {{.Size}} per page</p>
+        <div class="row">
             {{if gt .Page 1}}
-            <a href="/logs?page={{.PrevPage}}&size={{.Size}}" class="btn">Prev</a>
+            <a href="/logs?page={{.PrevPage}}&size={{.Size}}">Prev</a>
             {{else}}
-            <span class="btn disabled">Prev</span>
+            <button disabled>Prev</button>
             {{end}}
             {{if .HasNext}}
-            <a href="/logs?page={{.NextPage}}&size={{.Size}}" class="btn">Next</a>
+            <a href="/logs?page={{.NextPage}}&size={{.Size}}">Next</a>
             {{else}}
-            <span class="btn disabled">Next</span>
+            <button disabled>Next</button>
             {{end}}
         </div>
     </nav>
     {{else}}
-    <p class="empty">No logs found.</p>
+    <p>No logs found.</p>
     {{end}}
 </section>
 {{end}}

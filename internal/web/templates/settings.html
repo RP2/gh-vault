@@ -3,9 +3,8 @@
     <h1>Settings</h1>
 
     {{if eq .Reason "token_missing"}}
-    <div class="alert alert-warning" role="alert">
-        <p class="alert-title">GitHub token required</p>
-        <p>Please add a valid GitHub personal access token below to enable syncing and backups.</p>
+    <div class="alert" role="alert">
+        <p><strong>GitHub token required.</strong> Please add a valid GitHub personal access token below to enable syncing and backups.</p>
     </div>
     {{end}}
 
@@ -17,9 +16,11 @@
                 <label for="cron_schedule">Cron Schedule</label>
                 <input type="text" id="cron_schedule" name="cron_schedule" value="{{.Settings.CronSchedule}}">
             </div>
-            <div class="form-check">
-                <input type="checkbox" name="dry_run" value="on" id="dry_run" {{if .Settings.DryRun}}checked{{end}}>
-                <label for="dry_run">Dry Run</label>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" name="dry_run" value="on" id="dry_run" {{if .Settings.DryRun}}checked{{end}}>
+                    Dry Run
+                </label>
             </div>
             <div class="form-group">
                 <label for="auto_archive_days">Auto-archive Days</label>
@@ -29,20 +30,19 @@
                 <label for="log_retention_days">Log Retention Days</label>
                 <input type="number" id="log_retention_days" name="log_retention_days" value="{{.Settings.LogRetentionDays}}">
             </div>
-            <button type="submit" class="btn btn-primary">Save Settings</button>
+            <button type="submit">Save Settings</button>
         </form>
     </article>
 
     <article class="card">
         <h2>GitHub Token</h2>
-        <p class="help">Token status is checked on the settings page.</p>
         <form method="POST" action="/settings/token">
             <input type="hidden" name="csrf" value="{{.CSRFToken}}">
             <div class="form-group">
                 <label for="token">New Token</label>
                 <input type="password" id="token" name="token">
             </div>
-            <button type="submit" class="btn btn-neutral">Save Token</button>
+            <button type="submit">Save Token</button>
         </form>
     </article>
 </section>

@@ -95,7 +95,7 @@ func (s *Server) setupRouter() *chi.Mux {
 	r.Use(s.csrfMiddleware)
 
 	// Static files
-	r.Handle("/static/*", http.StripPrefix("/static/", s.staticFileHandler()))
+	r.Handle("/static/*", s.staticFileHandler())
 
 	// Health check (no auth)
 	r.Get("/healthz", s.handleHealthz)
@@ -160,16 +160,27 @@ func (s *Server) staticFileHandler() http.Handler {
 	fs := http.FS(staticFS)
 	fileServer := http.FileServer(fs)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ext := filepath.Ext(r.URL.Path)
-		if ct := mime.TypeByExtension(ext); ct != "" {
-			w.Header().Set("Content-Type", ct)
-		}
-		// Prevent directory listing
 		if strings.HasSuffix(r.URL.Path, "/") {
 			http.NotFound(w, r)
 			return
 		}
-		fileServer.ServeHTTP(w, r)
+		ext := filepath.Ext(r.URL.Path)
+		mw := &mimeResponseWriter{ResponseWriter: w, ext: ext}
+		fileServer.ServeHTTP(mw, r)
 	})
+}
+
+// mimeResponseWriter wraps ResponseWriter to override Content-Type from file extension.
+// embed.FS + http.FileServer content-sniffs as text/plain; this fixes it.
+type mimeResponseWriter struct {
+	http.ResponseWriter
+	ext string
+}
+
+func (w *mimeResponseWriter) WriteHeader(code int) {
+	if ct := mime.TypeByExtension(w.ext); ct != "" {
+		w.ResponseWriter.Header().Set("Content-Type", ct)
+	}
+	w.ResponseWriter.WriteHeader(code)
 }
 
