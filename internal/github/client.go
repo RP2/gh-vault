@@ -48,7 +48,7 @@ func (c *GhClient) ListOwnedRepos(ctx context.Context) ([]*gh.Repository, error)
 
 	opts := &gh.RepositoryListByAuthenticatedUserOptions{
 		ListOptions: gh.ListOptions{PerPage: 100},
-		Type:        "owner",
+		Type:        "",
 	}
 
 	var owned []*gh.Repository
