@@ -123,7 +123,8 @@ func background() (context.Context, context.CancelFunc) {
 
 func (s *Server) handleSetupGet(w http.ResponseWriter, r *http.Request) {
 	s.renderTemplate(w, "setup", map[string]string{
-		"CSRFToken": s.csrfToken(r),
+		"CSRFToken":   s.csrfToken(r),
+		"CurrentPath": r.URL.Path,
 	})
 }
 
@@ -136,10 +137,11 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 	username := strings.TrimSpace(r.FormValue("username"))
 	password := r.FormValue("password")
 		if username == "" || len(password) < 8 {
-			s.renderTemplate(w, "setup", map[string]string{
-				"Error":     "username is required and password must be at least 8 characters",
-				"CSRFToken": s.csrfToken(r),
-			})
+		s.renderTemplate(w, "setup", map[string]string{
+			"Error":       "username is required and password must be at least 8 characters",
+			"CSRFToken":   s.csrfToken(r),
+			"CurrentPath": r.URL.Path,
+		})
 			return
 		}
 
@@ -154,17 +156,19 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("create user", "username", username, "error", err)
 		if errors.Is(err, store.ErrUsernameExists) {
-			s.renderTemplate(w, "setup", map[string]string{
-				"Error":     "username already exists",
-				"CSRFToken": s.csrfToken(r),
-			})
+		s.renderTemplate(w, "setup", map[string]string{
+			"Error":       "username already exists",
+			"CSRFToken":   s.csrfToken(r),
+			"CurrentPath": r.URL.Path,
+		})
 			return
 		}
 		if errors.Is(err, store.ErrSingleUserOnly) {
-			s.renderTemplate(w, "setup", map[string]string{
-				"Error":     "an account already exists for this deployment",
-				"CSRFToken": s.csrfToken(r),
-			})
+		s.renderTemplate(w, "setup", map[string]string{
+			"Error":       "an account already exists for this deployment",
+			"CSRFToken":   s.csrfToken(r),
+			"CurrentPath": r.URL.Path,
+		})
 			return
 		}
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -186,8 +190,9 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLoginGet(w http.ResponseWriter, r *http.Request) {
 	s.renderTemplate(w, "login", map[string]string{
-		"Error":     r.URL.Query().Get("error"),
-		"CSRFToken": s.csrfToken(r),
+		"Error":       r.URL.Query().Get("error"),
+		"CSRFToken":   s.csrfToken(r),
+		"CurrentPath": r.URL.Path,
 	})
 }
 
@@ -247,26 +252,29 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use a bounded recent activity feed instead of loading the entire log table.
-	logs, err := s.logs.Recent(100)
+	logs, err := s.logs.Recent(5)
 	if err != nil {
 		slog.Error("list logs for dashboard", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	data := struct {
-		RepoCount   int
-		LogCount    int
-		SyncRunning bool
-		NextSync    time.Time
-		CSRFToken   string
-	}{
-		RepoCount:   len(repos),
-		LogCount:    len(logs),
-		SyncRunning: s.sched.IsRunning("sync"),
-		NextSync:    s.sched.NextRun("sync"),
-		CSRFToken:   s.csrfToken(r),
+	var backedUp, notBackedUp int
+	for _, repo := range repos {
+		if repo.LastBackup != nil {
+			backedUp++
+		} else {
+			notBackedUp++
+		}
+	}
+
+	data := map[string]any{
+		"RepoCount":   len(repos),
+		"BackedUp":    backedUp,
+		"NotBackedUp": notBackedUp,
+		"RecentLogs":  logs,
+		"CSRFToken":   s.csrfToken(r),
+		"CurrentPath": r.URL.Path,
 	}
 
 	s.renderTemplate(w, "dashboard", data)
@@ -296,13 +304,33 @@ func (s *Server) handleReposList(w http.ResponseWriter, r *http.Request) {
 		Repos        []model.Repo
 		DeletedRepos []model.Repo
 		DeletedCount int
+		CurrentPath  string
 	}{
 		CSRFToken:    s.csrfToken(r),
 		Repos:        active,
 		DeletedRepos: deleted,
 		DeletedCount: len(deleted),
+		CurrentPath:  r.URL.Path,
 	}
 	s.renderTemplate(w, "repos", data)
+}
+
+func (s *Server) renderReposTbody(w http.ResponseWriter, r *http.Request) error {
+	repos, err := s.repos.List()
+	if err != nil {
+		return err
+	}
+	var active []model.Repo
+	for _, repo := range repos {
+		if !repo.GitHubDeleted {
+			active = append(active, repo)
+		}
+	}
+	t, ok := s.templates["repos"]
+	if !ok {
+		return errors.New("repos template not found")
+	}
+	return t.ExecuteTemplate(w, "repos-tbody", map[string]any{"Repos": active})
 }
 
 func (s *Server) handleRepoSwitch(w http.ResponseWriter, r *http.Request) {
@@ -387,92 +415,6 @@ func (s *Server) handleRepoArchive(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/repos", http.StatusFound)
 }
 
-func (s *Server) handleRepoDelete(w http.ResponseWriter, r *http.Request) {
-	id, err := parseRepoID(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	repo, err := s.repos.Get(id)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			http.NotFound(w, r)
-			return
-		}
-		slog.Error("get repo", "id", id, "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	if r.PostFormValue("name") != repo.Name {
-		http.Error(w, "repository name mismatch", http.StatusBadRequest)
-		return
-	}
-
-	ctx := r.Context()
-	if err := s.ghClient.DeleteRepo(ctx, repo.Owner, repo.Name); err != nil {
-		slog.Error("delete repo", "owner", repo.Owner, "name", repo.Name, "error", err)
-		s.createLogEntry(repo.ID, "delete", "error", err.Error())
-		http.Error(w, "Failed to delete repository", http.StatusInternalServerError)
-		return
-	}
-
-	if err := s.repos.MarkDeleted(repo.ID); err != nil {
-		slog.Error("mark repo deleted", "id", repo.ID, "error", err)
-		// Retry once: the GitHub deletion already succeeded, so we must not
-		// return a 500 and leave the local state orphaned.
-		if err2 := s.repos.MarkDeleted(repo.ID); err2 != nil {
-			slog.Error("mark repo deleted retry failed", "id", repo.ID, "error", err2)
-			s.createLogEntry(repo.ID, "delete", "error", "GitHub delete succeeded but local mark failed: "+err2.Error())
-			http.Redirect(w, r, "/repos", http.StatusFound)
-			return
-		}
-	}
-
-	s.createLogEntry(repo.ID, "delete", "success", "repository deleted on GitHub")
-	http.Redirect(w, r, "/repos", http.StatusFound)
-}
-
-func (s *Server) handleRepoDeletePermanent(w http.ResponseWriter, r *http.Request) {
-	id, err := parseRepoID(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	repo, err := s.repos.Get(id)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			http.NotFound(w, r)
-			return
-		}
-		slog.Error("get repo", "id", id, "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	if r.PostFormValue("name") != repo.Name {
-		http.Error(w, "repository name mismatch", http.StatusBadRequest)
-		return
-	}
-
-	if err := s.repos.Delete(repo.ID); err != nil {
-		slog.Error("permanently delete repo", "id", repo.ID, "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	http.Redirect(w, r, "/repos", http.StatusFound)
-}
-
 func (s *Server) handleRepoBackup(w http.ResponseWriter, r *http.Request) {
 	id, err := parseRepoID(r)
 	if err != nil {
@@ -492,7 +434,7 @@ func (s *Server) handleRepoBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if repo.GitHubDeleted {
-		http.Error(w, "repository already deleted on GitHub", http.StatusConflict)
+		http.Error(w, "repository already removed from GitHub", http.StatusConflict)
 		return
 	}
 
@@ -580,15 +522,110 @@ func (s *Server) handleRepoBackupToggle(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+func (s *Server) handleBackupChecked(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		return
+	}
+	ids := r.FormValue("ids")
+	if ids == "" {
+		return
+	}
+	for _, idStr := range strings.Split(ids, ",") {
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			continue
+		}
+		repo, err := s.repos.Get(id)
+		if err != nil {
+			continue
+		}
+		if repo.GitHubDeleted {
+			continue
+		}
+		if !repo.BackupEnabled {
+			continue
+		}
+		go func(r model.Repo) {
+			ctx, cancel := background()
+			defer cancel()
+			if err := s.engine.CloneRepo(ctx, r); err != nil {
+				slog.Error("backup checked", "repo", r.Name, "error", err)
+				s.createLogEntry(r.ID, "backup", "error", err.Error())
+				return
+			}
+			now := time.Now()
+			if err := s.repos.SetLastBackup(r.ID, &now); err != nil {
+				slog.Error("set last backup", "id", r.ID, "error", err)
+			}
+			s.createLogEntry(r.ID, "backup", "success", "checked backup completed")
+		}(repo)
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (s *Server) handleArchiveChecked(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		return
+	}
+	ids := r.FormValue("ids")
+	if ids == "" {
+		return
+	}
+	for _, idStr := range strings.Split(ids, ",") {
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			continue
+		}
+		repo, err := s.repos.Get(id)
+		if err != nil {
+			continue
+		}
+		if repo.GitHubDeleted {
+			continue
+		}
+		if repo.BackupPath == nil || repo.VerifiedAt == nil {
+			continue
+		}
+		go func(r model.Repo) {
+			ctx, cancel := background()
+			defer cancel()
+			if err := s.ghClient.ArchiveRepo(ctx, r.Owner, r.Name); err != nil {
+				slog.Error("archive checked", "repo", r.Name, "error", err)
+				s.createLogEntry(r.ID, "archive", "error", err.Error())
+				return
+			}
+
+			var lang, url *string
+			if r.Language != nil {
+				v := *r.Language
+				lang = &v
+			}
+			if r.GitHubURL != nil {
+				v := *r.GitHubURL
+				url = &v
+			}
+			if err := s.repos.SetGitHubMetadata(r.ID, r.SizeKB, lang, url, true, r.LastPush); err != nil {
+				slog.Error("set github metadata after archive", "id", r.ID, "error", err)
+			}
+
+			s.createLogEntry(r.ID, "archive", "success", "repository archived on GitHub")
+		}(repo)
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
 // Triggers
 
 func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
-	if syncRunning.Load() {
+	if !syncRunning.CompareAndSwap(false, true) {
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(`<span class="badge">Sync already running</span>`))
+		if r.Header.Get("HX-Target") == "repos-table-body" {
+			w.Write([]byte(`<tr hx-get="/sync/status" hx-trigger="every 2s" hx-target="#repos-table-body" hx-swap="innerHTML"><td colspan="4"><span>Syncing from GitHub...</span></td></tr>`))
+		} else {
+			w.Write([]byte(`<span class="badge">Sync already running</span>`))
+		}
 		return
 	}
-	syncRunning.Store(true)
 	syncResultMu.Lock()
 	lastSyncResult = syncResult{}
 	syncResultMu.Unlock()
@@ -609,7 +646,11 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html")
 	w.WriteHeader(http.StatusAccepted)
-	fmt.Fprint(w, `<div id="sync-status" hx-get="/sync/status" hx-trigger="every 2s" hx-swap="outerHTML"><span class="spinner">Syncing from GitHub...</span></div>`)
+	if r.Header.Get("HX-Target") == "repos-table-body" {
+		fmt.Fprint(w, `<tr hx-get="/sync/status" hx-trigger="every 2s" hx-target="#repos-table-body" hx-swap="innerHTML"><td colspan="4"><span>Syncing from GitHub...</span></td></tr>`)
+	} else {
+		fmt.Fprint(w, `<div id="sync-status" hx-get="/sync/status" hx-trigger="every 2s" hx-swap="outerHTML"><span>Syncing from GitHub...</span></div>`)
+	}
 }
 
 func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
@@ -619,22 +660,44 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html")
 
+	isTableBody := r.Header.Get("HX-Target") == "repos-table-body"
+
 	if syncRunning.Load() {
-		fmt.Fprint(w, `<div id="sync-status" hx-get="/sync/status" hx-trigger="every 2s" hx-swap="outerHTML"><span class="spinner">Syncing from GitHub...</span></div>`)
+		if isTableBody {
+			fmt.Fprint(w, `<tr hx-get="/sync/status" hx-trigger="every 2s" hx-target="#repos-table-body" hx-swap="innerHTML"><td colspan="4"><span>Syncing from GitHub...</span></td></tr>`)
+		} else {
+			fmt.Fprint(w, `<div id="sync-status" hx-get="/sync/status" hx-trigger="every 2s" hx-swap="outerHTML"><span>Syncing from GitHub...</span></div>`)
+		}
 		return
 	}
 
 	if !result.Done {
-		fmt.Fprint(w, `<div id="sync-status"></div>`)
+		if isTableBody {
+			fmt.Fprint(w, `<tr><td colspan="4"></td></tr>`)
+		} else {
+			fmt.Fprint(w, `<div id="sync-status"></div>`)
+		}
 		return
 	}
 
 	if result.Error != "" {
-		fmt.Fprintf(w, `<div id="sync-status" class="alert error"><span>Sync failed: %s</span></div>`, template.HTMLEscapeString(result.Error))
+		if isTableBody {
+			fmt.Fprintf(w, `<tr><td colspan="4"><span class="badge error">Sync failed: %s</span></td></tr>`, template.HTMLEscapeString(result.Error))
+		} else {
+			fmt.Fprintf(w, `<div id="sync-status" class="alert error"><span>Sync failed: %s</span></div>`, template.HTMLEscapeString(result.Error))
+		}
 		return
 	}
 
-	fmt.Fprintf(w, `<div id="sync-status"><span>Sync complete: %d added, %d updated, %d deleted</span> <button onclick="location.reload()">Refresh</button></div>`, result.Added, result.Updated, result.Deleted)
+	if isTableBody {
+		if err := s.renderReposTbody(w, r); err != nil {
+			slog.Error("render repos tbody", "error", err)
+			fmt.Fprintf(w, `<tr><td colspan="4"><span class="badge error">Sync complete but failed to render: %s</span></td></tr>`, template.HTMLEscapeString(err.Error()))
+		}
+		return
+	}
+
+	fmt.Fprintf(w, `<div id="sync-status"><span>Sync complete: %d added, %d updated, %d removed</span> <a href="/repos">Refresh</a></div>`, result.Added, result.Updated, result.Deleted)
 }
 
 func (s *Server) handleTriggerBackup(w http.ResponseWriter, r *http.Request) {
@@ -718,21 +781,23 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := struct {
-		Logs      []model.LogEntry
-		Page      int
-		Size      int
-		PrevPage  int
-		NextPage  int
-		HasNext   bool
-		CSRFToken string
+		Logs        []model.LogEntry
+		Page        int
+		Size        int
+		PrevPage    int
+		NextPage    int
+		HasNext     bool
+		CSRFToken   string
+		CurrentPath string
 	}{
-		Logs:      pageEntries,
-		Page:      page,
-		Size:      size,
-		PrevPage:  page - 1,
-		NextPage:  page + 1,
-		HasNext:   len(entries) == total,
-		CSRFToken: s.csrfToken(r),
+		Logs:        pageEntries,
+		Page:        page,
+		Size:        size,
+		PrevPage:    page - 1,
+		NextPage:    page + 1,
+		HasNext:     len(entries) == total,
+		CSRFToken:   s.csrfToken(r),
+		CurrentPath: r.URL.Path,
 	}
 
 	s.renderTemplate(w, "logs", data)
@@ -749,13 +814,15 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := struct {
-		Settings  model.Settings
-		Reason    string
-		CSRFToken string
+		Settings    model.Settings
+		Reason      string
+		CSRFToken   string
+		CurrentPath string
 	}{
-		Settings:  settings,
-		Reason:    r.URL.Query().Get("reason"),
-		CSRFToken: s.csrfToken(r),
+		Settings:    settings,
+		Reason:      r.URL.Query().Get("reason"),
+		CSRFToken:   s.csrfToken(r),
+		CurrentPath: r.URL.Path,
 	}
 
 	s.renderTemplate(w, "settings", data)

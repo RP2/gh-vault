@@ -42,7 +42,8 @@ func (s *Server) stateMachine(next http.Handler) http.Handler {
 		if session != nil {
 			hasToken := s.hasToken(r.Context())
 			if !hasToken && path != "/settings" && path != "/settings/token" &&
-				path != "/settings/token-status" && path != "/logout" {
+				path != "/settings/token-status" && path != "/sync" &&
+				path != "/sync/status" && path != "/backup-all" && path != "/logout" {
 				http.Redirect(w, r, "/settings?reason=token_missing", http.StatusFound)
 				return
 			}

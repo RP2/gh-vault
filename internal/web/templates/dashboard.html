@@ -1,11 +1,24 @@
 {{define "content"}}
 <h1>Dashboard</h1>
-<p>Repositories: {{.RepoCount}}</p>
-<p>Logs: {{.LogCount}}</p>
-<p>Sync: {{if .SyncRunning}}<span class="badge">Running</span>{{else}}<span class="badge">Idle</span>{{end}}</p>
-<p>Next Sync: {{if .NextSync.IsZero}}<span class="badge">never</span>{{else}}{{.NextSync.Format "2006-01-02 15:04:05"}}{{end}}</p>
+<p>{{.RepoCount}} repos tracked · {{.BackedUp}} backed up · {{.NotBackedUp}} not backed up</p>
 <p>
-    <button hx-post="/trigger/sync" hx-disabled-elt="this">Trigger Sync</button>
-    <button hx-post="/trigger/backup" hx-swap="none" hx-disabled-elt="this">Trigger Backup</button>
+  <button hx-post="/sync" hx-swap="none">Sync Now</button>
+  <button hx-post="/backup-all" hx-swap="none">Backup All</button>
 </p>
+
+{{if .RecentLogs}}
+<h2>Recent Activity</h2>
+<table>
+  <thead><tr><th>When</th><th>Action</th><th>Detail</th></tr></thead>
+  <tbody>
+    {{range .RecentLogs}}
+    <tr>
+      <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+      <td>{{.Action}}</td>
+      <td>{{.Message}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}
 {{end}}

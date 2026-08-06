@@ -90,6 +90,16 @@ nav a:hover,
   text-decoration: underline;
 }
 
+nav a.active,
+.nav a.active {
+  text-decoration: underline;
+}
+
+nav a.active:hover,
+.nav a.active:hover {
+  text-decoration: none;
+}
+
 nav button,
 .nav button {
   font: inherit;
@@ -342,21 +352,6 @@ details.dropdown > .menu a:hover {
   opacity: 1;
 }
 
-.spinner {
-  display: inline-block;
-  width: 1rem;
-  height: 1rem;
-  border: 1px solid var(--border);
-  border-top-color: transparent;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .form-group {
   margin-bottom: 1rem;
 }
@@ -410,6 +405,13 @@ details.dropdown > .menu a:hover {
   flex-wrap: wrap;
   gap: 1rem;
   margin-bottom: 1rem;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
 }
 
 .deleted-section {

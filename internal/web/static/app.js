@@ -20,10 +20,44 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!search) return;
     search.addEventListener('input', function() {
         var q = this.value.toLowerCase();
-        var rows = document.querySelectorAll('#repos-table tbody tr');
+        var rows = document.querySelectorAll('#repos-table-body tr');
         rows.forEach(function(row) {
             var text = row.textContent.toLowerCase();
             row.style.display = text.indexOf(q) === -1 ? 'none' : '';
         });
     });
 });
+
+// Select-all checkbox
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('#select-all').forEach(function(selectAll) {
+        selectAll.addEventListener('change', function() {
+            document.querySelectorAll('.repo-check').forEach(function(cb) {
+                cb.checked = selectAll.checked;
+            });
+            updateActionButtons();
+        });
+    });
+
+    document.addEventListener('change', function(e) {
+        if (e.target.classList.contains('repo-check')) {
+            updateActionButtons();
+        }
+    });
+});
+
+function updateActionButtons() {
+    var checked = document.querySelectorAll('.repo-check:checked').length;
+    var backupBtn = document.getElementById('btn-backup');
+    var archiveBtn = document.getElementById('btn-archive');
+    if (backupBtn) backupBtn.disabled = checked === 0;
+    if (archiveBtn) archiveBtn.disabled = checked === 0;
+}
+
+function getCheckedIds() {
+    var ids = [];
+    document.querySelectorAll('.repo-check:checked').forEach(function(cb) {
+        ids.push(cb.value);
+    });
+    return {ids: ids.join(',')};
+}

@@ -62,6 +62,8 @@ func (s *SyncerImpl) SyncRepos(ctx context.Context) (SyncResult, error) {
 		return result, fmt.Errorf("sync: list stored repos: %w", err)
 	}
 
+	slog.Info("sync: starting", "api_repos", len(ghRepos), "store_repos", len(storedRepos))
+
 	ghMap := make(map[int64]*gh.Repository, len(ghRepos))
 	for _, r := range ghRepos {
 		ghMap[r.GetID()] = r
@@ -86,6 +88,7 @@ func (s *SyncerImpl) SyncRepos(ctx context.Context) (SyncResult, error) {
 				result.ErrorCount++
 				continue
 			}
+			logger.Info("sync: added new repo", "repo", owner+"/"+name)
 			result.Added++
 			continue
 		}
@@ -172,22 +175,26 @@ func (s *SyncerImpl) SyncRepos(ctx context.Context) (SyncResult, error) {
 
 		logger := slog.With("repo_id", stored.ID, "owner", stored.Owner, "name", stored.Name)
 
+		slog.Warn("sync: repo not in GitHub API, marking removed", "repo", stored.Owner+"/"+stored.Name, "github_id", stored.GitHubID)
+
 		if err := s.repos.MarkDeleted(stored.ID); err != nil {
-			logger.Error("sync: mark deleted", "error", err)
+			logger.Error("sync: mark removed", "error", err)
 			result.ErrorCount++
 			continue
 		}
 		if err := s.logs.Create(model.LogEntry{
 			RepoID:  stored.ID,
-			Action:  "sync.deleted",
+			Action:  "sync.removed",
 			Status:  "success",
-			Message: fmt.Sprintf("deleted %s/%s", stored.Owner, stored.Name),
+			Message: fmt.Sprintf("removed %s/%s from GitHub", stored.Owner, stored.Name),
 		}); err != nil {
 			logger.Error("sync: create log entry", "error", err)
 			result.ErrorCount++
 		}
 		result.Deleted++
 	}
+
+	slog.Info("sync: complete", "added", result.Added, "updated", result.Updated, "removed", result.Deleted, "unchanged", result.Unchanged)
 
 	return result, nil
 }

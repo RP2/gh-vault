@@ -13,10 +13,10 @@
 <body>
     {{if .CSRFToken}}
     <nav class="nav" aria-label="Main">
-        <a href="/">gh-vault</a>
-        <a href="/repos">Repos</a>
-        <a href="/logs">Logs</a>
-        <a href="/settings">Settings</a>
+        <a href="/" {{if eq .CurrentPath "/"}}class="active"{{end}}>gh-vault</a>
+        <a href="/repos" {{if eq .CurrentPath "/repos"}}class="active"{{end}}>Repos</a>
+        <a href="/logs" {{if eq .CurrentPath "/logs"}}class="active"{{end}}>Logs</a>
+        <a href="/settings" {{if eq .CurrentPath "/settings"}}class="active"{{end}}>Settings</a>
         <form method="POST" action="/logout">
             <input type="hidden" name="csrf" value="{{.CSRFToken}}">
             <button type="submit">Logout</button>
