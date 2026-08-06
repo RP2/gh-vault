@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	gh "github.com/google/go-github/v69/github"
@@ -173,70 +172,21 @@ func (s *SyncerImpl) SyncRepos(ctx context.Context) (SyncResult, error) {
 
 		logger := slog.With("repo_id", stored.ID, "owner", stored.Owner, "name", stored.Name)
 
-		if stored.BackupPath == nil {
-			if err := s.repos.MarkDeleted(stored.ID); err != nil {
-				logger.Error("sync: mark deleted", "error", err)
-				result.ErrorCount++
-				continue
-			}
-			if err := s.logs.Create(model.LogEntry{
-				RepoID:  stored.ID,
-				Action:  "sync.deleted",
-				Status:  "success",
-				Message: fmt.Sprintf("deleted %s/%s", stored.Owner, stored.Name),
-			}); err != nil {
-				logger.Error("sync: create log entry", "error", err)
-				result.ErrorCount++
-			}
-			result.Deleted++
-			continue
-		}
-
-		_, err := os.Stat(*stored.BackupPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				if err := s.repos.MarkDeleted(stored.ID); err != nil {
-					logger.Error("sync: mark deleted", "error", err)
-					result.ErrorCount++
-					continue
-				}
-				if err := s.logs.Create(model.LogEntry{
-					RepoID:  stored.ID,
-					Action:  "sync.deleted",
-					Status:  "success",
-					Message: fmt.Sprintf("deleted %s/%s", stored.Owner, stored.Name),
-				}); err != nil {
-					logger.Error("sync: create log entry", "error", err)
-					result.ErrorCount++
-				}
-				result.Deleted++
-				continue
-			}
-			logger.Error("sync: stat backup path", "path", *stored.BackupPath, "error", err)
+		if err := s.repos.MarkDeleted(stored.ID); err != nil {
+			logger.Error("sync: mark deleted", "error", err)
 			result.ErrorCount++
 			continue
 		}
-
-		if stored.VerifiedAt != nil {
-			if err := s.repos.MarkDeleted(stored.ID); err != nil {
-				logger.Error("sync: mark deleted", "error", err)
-				result.ErrorCount++
-				continue
-			}
-			if err := s.logs.Create(model.LogEntry{
-				RepoID:  stored.ID,
-				Action:  "sync.deleted",
-				Status:  "success",
-				Message: fmt.Sprintf("deleted %s/%s", stored.Owner, stored.Name),
-			}); err != nil {
-				logger.Error("sync: create log entry", "error", err)
-				result.ErrorCount++
-			}
-			result.Deleted++
-			continue
+		if err := s.logs.Create(model.LogEntry{
+			RepoID:  stored.ID,
+			Action:  "sync.deleted",
+			Status:  "success",
+			Message: fmt.Sprintf("deleted %s/%s", stored.Owner, stored.Name),
+		}); err != nil {
+			logger.Error("sync: create log entry", "error", err)
+			result.ErrorCount++
 		}
-
-		logger.Warn("sync: backup exists but repo not verified, skipping", "path", *stored.BackupPath)
+		result.Deleted++
 	}
 
 	return result, nil

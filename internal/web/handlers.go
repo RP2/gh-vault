@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -27,7 +29,19 @@ var (
 	cachedRateLimitAt time.Time
 	rateLimitMu       sync.Mutex
 	rateLimitTTL      = 60 * time.Second
+
+	syncRunning    atomic.Bool
+	lastSyncResult syncResult
+	syncResultMu   sync.Mutex
 )
+
+type syncResult struct {
+	Done    bool
+	Added   int
+	Updated int
+	Deleted int
+	Error   string
+}
 
 // parseRepoID parses the {id} URL parameter as an int64.
 func parseRepoID(r *http.Request) (int64, error) {
@@ -47,22 +61,16 @@ func (s *Server) csrfToken(r *http.Request) string {
 	return ""
 }
 
-// renderTemplate clones the layout, parses the page template, and renders via "layout".
+// renderTemplate renders a pre-parsed page template wrapped in the layout.
 func (s *Server) renderTemplate(w http.ResponseWriter, name string, data any) {
-	t, err := s.tmpl.Clone()
-	if err != nil {
-		slog.Error("clone template", "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	if _, err := t.ParseFS(templateFS, "templates/"+name); err != nil {
-		slog.Error("parse template", "template", name, "error", err)
+	t, ok := s.templates[name]
+	if !ok {
+		slog.Error("template not found", "name", name)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 	if err := t.ExecuteTemplate(w, "layout", data); err != nil {
 		slog.Error("render template", "template", name, "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
 }
 
@@ -114,7 +122,7 @@ func background() (context.Context, context.CancelFunc) {
 // Setup Wizard
 
 func (s *Server) handleSetupGet(w http.ResponseWriter, r *http.Request) {
-	s.renderTemplate(w, "setup.html", map[string]string{
+	s.renderTemplate(w, "setup", map[string]string{
 		"CSRFToken": s.csrfToken(r),
 	})
 }
@@ -128,7 +136,7 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 	username := strings.TrimSpace(r.FormValue("username"))
 	password := r.FormValue("password")
 		if username == "" || len(password) < 8 {
-			s.renderTemplate(w, "setup.html", map[string]string{
+			s.renderTemplate(w, "setup", map[string]string{
 				"Error":     "username is required and password must be at least 8 characters",
 				"CSRFToken": s.csrfToken(r),
 			})
@@ -146,14 +154,14 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("create user", "username", username, "error", err)
 		if errors.Is(err, store.ErrUsernameExists) {
-			s.renderTemplate(w, "setup.html", map[string]string{
+			s.renderTemplate(w, "setup", map[string]string{
 				"Error":     "username already exists",
 				"CSRFToken": s.csrfToken(r),
 			})
 			return
 		}
 		if errors.Is(err, store.ErrSingleUserOnly) {
-			s.renderTemplate(w, "setup.html", map[string]string{
+			s.renderTemplate(w, "setup", map[string]string{
 				"Error":     "an account already exists for this deployment",
 				"CSRFToken": s.csrfToken(r),
 			})
@@ -177,7 +185,7 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 // Auth
 
 func (s *Server) handleLoginGet(w http.ResponseWriter, r *http.Request) {
-	s.renderTemplate(w, "login.html", map[string]string{
+	s.renderTemplate(w, "login", map[string]string{
 		"Error":     r.URL.Query().Get("error"),
 		"CSRFToken": s.csrfToken(r),
 	})
@@ -261,7 +269,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		CSRFToken:   s.csrfToken(r),
 	}
 
-	s.renderTemplate(w, "dashboard.html", data)
+	s.renderTemplate(w, "dashboard", data)
 }
 
 // Repos
@@ -273,14 +281,28 @@ func (s *Server) handleReposList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	data := struct {
-		CSRFToken string
-		Repos     []model.Repo
-	}{
-		CSRFToken: s.csrfToken(r),
-		Repos:     repos,
+
+	var active, deleted []model.Repo
+	for _, repo := range repos {
+		if repo.GitHubDeleted {
+			deleted = append(deleted, repo)
+		} else {
+			active = append(active, repo)
+		}
 	}
-	s.renderTemplate(w, "repos.html", data)
+
+	data := struct {
+		CSRFToken    string
+		Repos        []model.Repo
+		DeletedRepos []model.Repo
+		DeletedCount int
+	}{
+		CSRFToken:    s.csrfToken(r),
+		Repos:        active,
+		DeletedRepos: deleted,
+		DeletedCount: len(deleted),
+	}
+	s.renderTemplate(w, "repos", data)
 }
 
 func (s *Server) handleRepoSwitch(w http.ResponseWriter, r *http.Request) {
@@ -561,11 +583,58 @@ func (s *Server) handleRepoBackupToggle(w http.ResponseWriter, r *http.Request) 
 // Triggers
 
 func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	if _, err := s.syncer.SyncRepos(ctx); err != nil {
-		slog.Error("trigger sync", "error", err)
+	if syncRunning.Load() {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<span class="badge">Sync already running</span>`))
+		return
 	}
-	http.Redirect(w, r, "/repos", http.StatusFound)
+	syncRunning.Store(true)
+	syncResultMu.Lock()
+	lastSyncResult = syncResult{}
+	syncResultMu.Unlock()
+
+	go func() {
+		defer syncRunning.Store(false)
+		ctx, cancel := background()
+		defer cancel()
+		result, err := s.syncer.SyncRepos(ctx)
+		syncResultMu.Lock()
+		if err != nil {
+			lastSyncResult = syncResult{Done: true, Error: err.Error()}
+		} else {
+			lastSyncResult = syncResult{Done: true, Added: result.Added, Updated: result.Updated, Deleted: result.Deleted}
+		}
+		syncResultMu.Unlock()
+	}()
+
+	w.Header().Set("Content-Type", "text/html")
+	w.WriteHeader(http.StatusAccepted)
+	fmt.Fprint(w, `<div id="sync-status" hx-get="/sync/status" hx-trigger="every 2s" hx-swap="outerHTML"><span class="spinner">Syncing from GitHub...</span></div>`)
+}
+
+func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
+	syncResultMu.Lock()
+	result := lastSyncResult
+	syncResultMu.Unlock()
+
+	w.Header().Set("Content-Type", "text/html")
+
+	if syncRunning.Load() {
+		fmt.Fprint(w, `<div id="sync-status" hx-get="/sync/status" hx-trigger="every 2s" hx-swap="outerHTML"><span class="spinner">Syncing from GitHub...</span></div>`)
+		return
+	}
+
+	if !result.Done {
+		fmt.Fprint(w, `<div id="sync-status"></div>`)
+		return
+	}
+
+	if result.Error != "" {
+		fmt.Fprintf(w, `<div id="sync-status" class="alert error"><span>Sync failed: %s</span></div>`, template.HTMLEscapeString(result.Error))
+		return
+	}
+
+	fmt.Fprintf(w, `<div id="sync-status"><span>Sync complete: %d added, %d updated, %d deleted</span> <button onclick="location.reload()">Refresh</button></div>`, result.Added, result.Updated, result.Deleted)
 }
 
 func (s *Server) handleTriggerBackup(w http.ResponseWriter, r *http.Request) {
@@ -666,7 +735,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		CSRFToken: s.csrfToken(r),
 	}
 
-	s.renderTemplate(w, "logs.html", data)
+	s.renderTemplate(w, "logs", data)
 }
 
 // Settings
@@ -689,7 +758,7 @@ func (s *Server) handleSettingsGet(w http.ResponseWriter, r *http.Request) {
 		CSRFToken: s.csrfToken(r),
 	}
 
-	s.renderTemplate(w, "settings.html", data)
+	s.renderTemplate(w, "settings", data)
 }
 
 func (s *Server) handleSettingsPost(w http.ResponseWriter, r *http.Request) {

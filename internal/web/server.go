@@ -30,7 +30,7 @@ var staticFS embed.FS
 type Server struct {
 	cfg           *config.Config
 	router        *chi.Mux
-	tmpl          *template.Template
+	templates     map[string]*template.Template
 	users         store.UserStore
 	sessions      store.SessionStore
 	settings      store.SettingsStore
@@ -59,9 +59,22 @@ func NewServer(
 	tokenProvider github.TokenProvider,
 	ghClient github.Client,
 ) (*Server, error) {
-	tmpl, err := template.ParseFS(templateFS, "templates/layout.html")
+	layoutTmpl, err := template.ParseFS(templateFS, "templates/layout.html")
 	if err != nil {
 		return nil, fmt.Errorf("web: parse layout template: %w", err)
+	}
+
+	pages := []string{"dashboard", "repos", "logs", "settings", "login", "setup"}
+	templates := make(map[string]*template.Template)
+	for _, name := range pages {
+		t, err := layoutTmpl.Clone()
+		if err != nil {
+			return nil, fmt.Errorf("web: clone layout: %w", err)
+		}
+		if _, err := t.ParseFS(templateFS, "templates/"+name+".html"); err != nil {
+			return nil, fmt.Errorf("web: parse %s: %w", name, err)
+		}
+		templates[name] = t
 	}
 
 	count, err := users.Count()
@@ -82,7 +95,7 @@ func NewServer(
 		sched:         sched,
 		tokenProvider: tokenProvider,
 		ghClient:      ghClient,
-		tmpl:          tmpl,
+		templates:     templates,
 		setupDone:     count > 0,
 	}
 	s.router = s.setupRouter()
@@ -129,6 +142,7 @@ func (s *Server) setupRouter() *chi.Mux {
 
 	// Triggers
 	r.Post("/trigger/sync", s.handleTriggerSync)
+	r.Get("/sync/status", s.handleSyncStatus)
 	r.Post("/trigger/backup", s.handleTriggerBackup)
 
 	// Logs

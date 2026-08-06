@@ -1,68 +1,88 @@
 {{define "content"}}
 <section>
+  <div class="repos-header">
     <h1>Repositories</h1>
-    <p><button hx-post="/trigger/sync">Refresh from GitHub</button></p>
-    {{if .Repos}}
-    <div class="table-wrapper">
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>
-                        <input type="checkbox" id="select-all-backup" title="Select all" onchange="document.querySelectorAll('.backup-toggle').forEach(cb => { cb.checked = this.checked; cb.dispatchEvent(new Event('change')); });">
-                    </th>
-                    <th>Name</th>
-                    <th>Owner</th>
-                    <th>Format</th>
-                    <th>Last Backup</th>
-                    <th>Status</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {{range .Repos}}
-                <tr>
-                    <td>
-                        <input type="checkbox" name="backup_enabled" value="on" {{if .BackupEnabled}}checked{{end}} class="backup-toggle" hx-post="/repos/{{.ID}}/backup-toggle" hx-trigger="change" hx-swap="none">
-                    </td>
-                    <td><strong>{{.Name}}</strong></td>
-                    <td>{{.Owner}}</td>
-                    <td>{{.Format}}</td>
-                    <td>{{if .LastBackup}}{{.LastBackup.Format "2006-01-02 15:04:05"}}{{else}}-{{end}}</td>
-                    <td>
-                        {{if .GitHubDeleted}}
-                        <span class="badge">Deleted</span>
-                        {{else if .GitHubArchived}}
-                        <span class="badge">Archived</span>
-                        {{else}}
-                        <span class="badge">Active</span>
-                        {{end}}
-                    </td>
-                    <td>
-                        <div class="row">
-                            <button hx-post="/repos/{{.ID}}/switch" hx-swap="none">Switch Format</button>
-                            <button hx-post="/repos/{{.ID}}/archive">Archive</button>
-                            <button hx-post="/repos/{{.ID}}/backup">Backup</button>
-                        </div>
-                        <label for="auto_archive_{{.ID}}">
-                            <input type="checkbox" id="auto_archive_{{.ID}}" name="auto_archive" value="on" {{if .AutoArchive}}checked{{end}} hx-post="/repos/{{.ID}}/auto-archive" hx-trigger="change">
-                            Auto-archive
-                        </label>
-                        <form method="POST" action="/repos/{{.ID}}/delete" data-confirm="Delete repository {{.Name}}? This action requires typing the name on the next screen.">
-                            <input type="hidden" name="csrf" value="{{$.CSRFToken}}">
-                            <div class="form-group">
-                                <label for="delete_name_{{.ID}}">Type {{.Name}} to confirm</label>
-                                <input type="text" id="delete_name_{{.ID}}" name="name" placeholder="name to confirm" required>
-                            </div>
-                            <button type="submit">Delete</button>
-                        </form>
-                    </td>
-                </tr>
-                {{end}}
-            </tbody>
-        </table>
+    <div>
+      <button hx-post="/sync" hx-target="#sync-status" hx-swap="innerHTML">Sync from GitHub</button>
+      <button hx-post="/backup-all" hx-swap="none">Backup All</button>
     </div>
+  </div>
+  <div id="sync-status"></div>
+
+  <input type="search" name="q" placeholder="Filter repos...">
+
+  <div class="table-scroll">
+    <div id="repos-table">
+    {{if .Repos}}
+    <table>
+      <thead>
+        <tr>
+          <th>Repository</th>
+          <th>Last Backup</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Repos}}
+        <tr{{if .GitHubDeleted}} class="deleted"{{end}}>
+          <td>
+            <strong>{{.Owner}}/{{.Name}}</strong>
+            <span class="format-badge">{{.Format}}</span>
+            {{if .BackupEnabled}}<span class="badge success">backup</span>{{end}}
+          </td>
+          <td>{{if .LastBackup}}{{.LastBackup.Format "2006-01-02 15:04"}}{{else}}—{{end}}</td>
+          <td>
+            {{if .GitHubDeleted}}<span class="badge error">deleted</span>
+            {{else if .GitHubArchived}}<span class="badge">archived</span>
+            {{else if .VerifiedAt}}<span class="badge success">verified</span>
+            {{else}}<span class="badge">active</span>{{end}}
+          </td>
+          <td class="actions">
+            <button hx-post="/repos/{{.ID}}/backup" hx-swap="none" hx-disabled-elt="this">Backup</button>
+            <button hx-post="/repos/{{.ID}}/backup-toggle" hx-swap="none"
+              hx-vals='{"backup_enabled":"{{if .BackupEnabled}}off{{else}}on{{end}}"}'>
+              {{if .BackupEnabled}}Disable{{else}}Enable{{end}}
+            </button>
+            <details class="dropdown">
+              <summary>···</summary>
+              <div class="dropdown-menu">
+                <button hx-post="/repos/{{.ID}}/switch" hx-swap="none">Switch to {{if eq .Format "clone"}}bundle{{else}}clone{{end}}</button>
+                <button hx-post="/repos/{{.ID}}/verify" hx-swap="none">Verify</button>
+                <button hx-post="/repos/{{.ID}}/auto-archive" hx-swap="none"
+                  hx-vals='{"auto_archive":"{{if .AutoArchive}}off{{else}}on{{end}}"}'>
+                  {{if .AutoArchive}}Disable auto-archive{{else}}Enable auto-archive{{end}}
+                </button>
+              </div>
+            </details>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
     {{else}}
-    <p>No repositories found.</p>
+    <p>No repositories. <button hx-post="/sync" hx-target="#sync-status" hx-swap="innerHTML">Sync from GitHub</button> to get started.</p>
     {{end}}
+    </div>
+  </div>
+
+  {{if .DeletedCount}}
+  <details class="deleted-section">
+    <summary>{{.DeletedCount}} deleted repositories</summary>
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>Repository</th><th></th></tr></thead>
+      <tbody>
+        {{range .DeletedRepos}}
+        <tr>
+          <td><s>{{.Owner}}/{{.Name}}</s></td>
+          <td><button hx-post="/repos/{{.ID}}/backup-toggle" hx-swap="none" hx-vals='{"backup_enabled":"off"}' hx-confirm="Remove from vault?">Remove</button></td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    </div>
+  </details>
+  {{end}}
 </section>
 {{end}}

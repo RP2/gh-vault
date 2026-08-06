@@ -24,11 +24,15 @@ func TestTemplatesRender(t *testing.T) {
 			CSRFToken   string
 		}{RepoCount: 5, LogCount: 10, SyncRunning: true, NextSync: time.Now(), CSRFToken: "abc"},
 		"repos.html": struct {
-			CSRFToken string
-			Repos     []model.Repo
+			CSRFToken    string
+			Repos        []model.Repo
+			DeletedRepos []model.Repo
+			DeletedCount int
 		}{CSRFToken: "abc", Repos: []model.Repo{
 			{ID: 1, Owner: "RP2", Name: "gh-vault", Format: model.FormatClone, AutoArchive: true},
-		}},
+		}, DeletedRepos: []model.Repo{
+			{ID: 2, Owner: "RP2", Name: "old-repo", Format: model.FormatClone, GitHubDeleted: true},
+		}, DeletedCount: 1},
 		"logs.html": struct {
 			Logs      []model.LogEntry
 			Page      int

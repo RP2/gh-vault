@@ -138,12 +138,24 @@ func (e *BackupEngine) CloneRepo(ctx context.Context, repo model.Repo) error {
 		if !info.IsDir() {
 			return fmt.Errorf("backup: clone %s/%s: target exists but is not a directory", repo.Owner, repo.Name)
 		}
-		if err := e.runGit(ctx, []string{"--git-dir=" + target, "fetch", "--prune", "origin"}, ""); err != nil {
-			slog.Error("backup: fetch failed", "owner", repo.Owner, "name", repo.Name, "error", err)
-			return fmt.Errorf("backup: clone %s/%s: %w", repo.Owner, repo.Name, err)
+		// Bare repos store HEAD directly in the directory; a missing HEAD means
+		// the directory is stale and should be recloned.
+		if _, err := os.Stat(filepath.Join(target, "HEAD")); err != nil {
+			if !os.IsNotExist(err) {
+				return fmt.Errorf("backup: clone %s/%s: stat HEAD: %w", repo.Owner, repo.Name, err)
+			}
+			slog.Warn("backup: target directory missing HEAD, removing stale clone", "owner", repo.Owner, "name", repo.Name)
+			if err := os.RemoveAll(target); err != nil {
+				return fmt.Errorf("backup: clone %s/%s: remove stale clone: %w", repo.Owner, repo.Name, err)
+			}
+		} else {
+			if err := e.runGit(ctx, []string{"--git-dir=" + target, "fetch", "--prune", "origin"}, ""); err != nil {
+				slog.Error("backup: fetch failed", "owner", repo.Owner, "name", repo.Name, "error", err)
+				return fmt.Errorf("backup: clone %s/%s: %w", repo.Owner, repo.Name, err)
+			}
+			slog.Info("backup: fetch succeeded", "owner", repo.Owner, "name", repo.Name)
+			return nil
 		}
-		slog.Info("backup: fetch succeeded", "owner", repo.Owner, "name", repo.Name)
-		return nil
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("backup: clone %s/%s: stat target: %w", repo.Owner, repo.Name, err)
 	}
@@ -218,7 +230,7 @@ func (e *BackupEngine) SwitchToBundle(ctx context.Context, repo model.Repo) erro
 	owner, name := repo.Owner, repo.Name
 	source := e.activePath(owner, name)
 	final := e.archivedPath(owner, name)
-	temp := filepath.Join(filepath.Dir(final), fmt.Sprintf(".bundle.%d.tmp", os.Getpid()))
+	temp := filepath.Join(filepath.Dir(final), fmt.Sprintf(".bundle.%d.tmp", time.Now().UnixNano()))
 
 	cleanup := func() {
 		_ = os.RemoveAll(temp)
@@ -240,17 +252,17 @@ func (e *BackupEngine) SwitchToBundle(ctx context.Context, repo model.Repo) erro
 		return fmt.Errorf("backup: switch to bundle %s/%s step 3: %w", owner, name, err)
 	}
 
-	// Step 4: remove the bare clone directory.
-	if err := os.RemoveAll(source); err != nil {
+	// Step 4: update the stored format and clear verification.
+	newPath := fmt.Sprintf("archived/%s/%s.bundle", owner, name)
+	if err := e.repos.SetFormat(repo.ID, model.FormatBundle, newPath); err != nil {
+		return fmt.Errorf("backup: switch to bundle %s/%s step 4: %w", owner, name, err)
+	}
+	if err := e.repos.SetVerified(repo.ID, nil); err != nil {
 		return fmt.Errorf("backup: switch to bundle %s/%s step 4: %w", owner, name, err)
 	}
 
-	// Step 5: update the stored format and clear verification.
-	newPath := fmt.Sprintf("archived/%s/%s.bundle", owner, name)
-	if err := e.repos.SetFormat(repo.ID, model.FormatBundle, newPath); err != nil {
-		return fmt.Errorf("backup: switch to bundle %s/%s step 5: %w", owner, name, err)
-	}
-	if err := e.repos.SetVerified(repo.ID, nil); err != nil {
+	// Step 5: remove the bare clone directory.
+	if err := os.RemoveAll(source); err != nil {
 		return fmt.Errorf("backup: switch to bundle %s/%s step 5: %w", owner, name, err)
 	}
 	return nil
@@ -287,7 +299,7 @@ func (e *BackupEngine) SwitchToClone(ctx context.Context, repo model.Repo) error
 
 	bundlePath := e.archivedPath(owner, name)
 	final := e.activePath(owner, name)
-	temp := fmt.Sprintf("%s.%d.tmp", final, os.Getpid())
+	temp := fmt.Sprintf("%s.%d.tmp", final, time.Now().UnixNano())
 
 	cleanup := func() {
 		_ = os.RemoveAll(temp)
@@ -338,17 +350,17 @@ func (e *BackupEngine) SwitchToClone(ctx context.Context, repo model.Repo) error
 		return fmt.Errorf("backup: switch to clone %s/%s step 6: %w", owner, name, err)
 	}
 
-	// Step 7: remove the bundle.
-	if err := os.RemoveAll(bundlePath); err != nil {
+	// Step 7: update the stored format and clear verification.
+	newPath := fmt.Sprintf("active/%s/%s.git", owner, name)
+	if err := e.repos.SetFormat(repo.ID, model.FormatClone, newPath); err != nil {
+		return fmt.Errorf("backup: switch to clone %s/%s step 7: %w", owner, name, err)
+	}
+	if err := e.repos.SetVerified(repo.ID, nil); err != nil {
 		return fmt.Errorf("backup: switch to clone %s/%s step 7: %w", owner, name, err)
 	}
 
-	// Step 8: update the stored format and clear verification.
-	newPath := fmt.Sprintf("active/%s/%s.git", owner, name)
-	if err := e.repos.SetFormat(repo.ID, model.FormatClone, newPath); err != nil {
-		return fmt.Errorf("backup: switch to clone %s/%s step 8: %w", owner, name, err)
-	}
-	if err := e.repos.SetVerified(repo.ID, nil); err != nil {
+	// Step 8: remove the bundle.
+	if err := os.RemoveAll(bundlePath); err != nil {
 		return fmt.Errorf("backup: switch to clone %s/%s step 8: %w", owner, name, err)
 	}
 	return nil

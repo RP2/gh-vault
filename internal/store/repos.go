@@ -13,6 +13,9 @@ var ErrNotFound = errors.New("store: not found")
 
 type RepoStore interface {
 	List() ([]model.Repo, error)
+	ListFiltered(query string) ([]model.Repo, error)
+	ListActive() ([]model.Repo, error)
+	ListDeleted() ([]model.Repo, error)
 	Get(id int64) (model.Repo, error)
 	GetByOwnerName(owner, name string) (model.Repo, error)
 	Upsert(r model.Repo) (int64, error)
@@ -116,6 +119,69 @@ func (s *reposStore) List() ([]model.Repo, error) {
 	rows, err := s.db.Query("SELECT " + repoColumns + " FROM repos ORDER BY owner, name")
 	if err != nil {
 		return nil, fmt.Errorf("store: list repos: %w", err)
+	}
+	defer rows.Close()
+
+	var repos []model.Repo
+	for rows.Next() {
+		r, err := scanRepo(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: scan repo: %w", err)
+		}
+		repos = append(repos, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterate repos: %w", err)
+	}
+	return repos, nil
+}
+
+func (s *reposStore) ListFiltered(query string) ([]model.Repo, error) {
+	rows, err := s.db.Query("SELECT "+repoColumns+" FROM repos WHERE owner LIKE '%' || ? || '%' OR name LIKE '%' || ? || '%' ORDER BY owner, name", query, query)
+	if err != nil {
+		return nil, fmt.Errorf("store: list filtered repos: %w", err)
+	}
+	defer rows.Close()
+
+	var repos []model.Repo
+	for rows.Next() {
+		r, err := scanRepo(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: scan repo: %w", err)
+		}
+		repos = append(repos, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterate repos: %w", err)
+	}
+	return repos, nil
+}
+
+func (s *reposStore) ListActive() ([]model.Repo, error) {
+	rows, err := s.db.Query("SELECT " + repoColumns + " FROM repos WHERE github_deleted = 0 ORDER BY owner, name")
+	if err != nil {
+		return nil, fmt.Errorf("store: list active repos: %w", err)
+	}
+	defer rows.Close()
+
+	var repos []model.Repo
+	for rows.Next() {
+		r, err := scanRepo(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: scan repo: %w", err)
+		}
+		repos = append(repos, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterate repos: %w", err)
+	}
+	return repos, nil
+}
+
+func (s *reposStore) ListDeleted() ([]model.Repo, error) {
+	rows, err := s.db.Query("SELECT " + repoColumns + " FROM repos WHERE github_deleted = 1 ORDER BY owner, name")
+	if err != nil {
+		return nil, fmt.Errorf("store: list deleted repos: %w", err)
 	}
 	defer rows.Close()
 
