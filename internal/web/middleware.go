@@ -5,39 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
-
-	"github.com/RP2/gh-vault/internal/store"
 )
-
-// cachedUserCount fetches the user count once and caches it.
-type cachedUserCount struct {
-	count atomic.Int64
-	once  sync.Once
-}
-
-// Load returns the cached user count, fetching it on first call.
-func (c *cachedUserCount) Load(users store.UserStore) int64 {
-	c.once.Do(func() {
-		n, err := users.Count()
-		if err != nil {
-			c.count.Store(-1)
-		} else {
-			c.count.Store(int64(n))
-		}
-	})
-	count := c.count.Load()
-	if count < 0 {
-		n, err := users.Count()
-		if err != nil {
-			return -1
-		}
-		return int64(n)
-	}
-	return count
-}
 
 // stateMachine enforces the routing state machine from PLAN.md
 func (s *Server) stateMachine(next http.Handler) http.Handler {
@@ -50,8 +19,9 @@ func (s *Server) stateMachine(next http.Handler) http.Handler {
 			return
 		}
 
-		count := s.userCount.Load(s.users)
-		if count < 0 {
+		count, err := s.users.Count()
+		if err != nil {
+			slog.Error("state machine: count users", "error", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}

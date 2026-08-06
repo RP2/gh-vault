@@ -43,7 +43,6 @@ type Server struct {
 	tokenProvider github.TokenProvider
 	ghClient      github.Client
 
-	userCount cachedUserCount
 }
 
 func NewServer(
@@ -119,6 +118,7 @@ func (s *Server) setupRouter() *chi.Mux {
 	r.Post("/repos/{id}/delete", s.handleRepoDelete)
 	r.Delete("/repos/{id}", s.handleRepoDeletePermanent)
 	r.Post("/repos/{id}/backup", s.handleRepoBackup)
+	r.Post("/repos/{id}/backup-toggle", s.handleRepoBackupToggle)
 	r.Post("/repos/{id}/auto-archive", s.handleRepoAutoArchive)
 
 	// Triggers

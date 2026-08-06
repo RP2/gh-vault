@@ -9,7 +9,10 @@ import (
 	"modernc.org/sqlite"
 )
 
-var ErrUsernameExists = errors.New("store: username already exists")
+var (
+	ErrUsernameExists = errors.New("store: username already exists")
+	ErrSingleUserOnly = errors.New("store: single user only")
+)
 
 type UserStore interface {
 	Count() (int, error)
@@ -36,14 +39,31 @@ func (s *usersStore) Count() (int, error) {
 }
 
 func (s *usersStore) Create(username, passwordHash string) (int64, error) {
-	var id int64
-	err := s.db.QueryRow(userInsertSQL, username, passwordHash).Scan(&id)
+	tx, err := s.db.Begin()
 	if err != nil {
+		return 0, fmt.Errorf("store: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var count int
+	if err := tx.QueryRow(userCountSQL).Scan(&count); err != nil {
+		return 0, fmt.Errorf("store: count users: %w", err)
+	}
+	if count > 0 {
+		return 0, ErrSingleUserOnly
+	}
+
+	var id int64
+	if err := tx.QueryRow(userInsertSQL, username, passwordHash).Scan(&id); err != nil {
 		var sqliteErr *sqlite.Error
 		if errors.As(err, &sqliteErr) && sqliteErr.Code() == 1555 { // SQLITE_CONSTRAINT_UNIQUE
 			return 0, fmt.Errorf("store: create user %q: %w", username, ErrUsernameExists)
 		}
 		return 0, fmt.Errorf("store: create user %q: %w", username, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("store: commit user creation: %w", err)
 	}
 	return id, nil
 }

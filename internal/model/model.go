@@ -19,6 +19,7 @@ type Repo struct {
 	GitHubArchived bool       `db:"github_archived" json:"github_archived"`
 	GitHubDeleted  bool       `db:"github_deleted" json:"github_deleted"`
 	AutoArchive    bool       `db:"auto_archive" json:"auto_archive"`
+	BackupEnabled  bool       `db:"backup_enabled" json:"backup_enabled"`
 	CreatedAt      time.Time  `db:"created_at" json:"created_at"`
 	UpdatedAt      time.Time  `db:"updated_at" json:"updated_at"`
 }

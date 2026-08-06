@@ -238,7 +238,7 @@ func (s *CronScheduler) backupJob(ctx context.Context) {
 
 	var active []model.Repo
 	for _, r := range repos {
-		if !r.GitHubDeleted {
+		if !r.GitHubDeleted && r.BackupEnabled {
 			active = append(active, r)
 		}
 	}

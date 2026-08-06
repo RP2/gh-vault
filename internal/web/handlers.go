@@ -125,8 +125,8 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-		username := strings.TrimSpace(r.FormValue("username"))
-		password := r.FormValue("password")
+	username := strings.TrimSpace(r.FormValue("username"))
+	password := r.FormValue("password")
 		if username == "" || len(password) < 8 {
 			s.renderTemplate(w, "setup.html", map[string]string{
 				"Error":     "username is required and password must be at least 8 characters",
@@ -148,6 +148,13 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, store.ErrUsernameExists) {
 			s.renderTemplate(w, "setup.html", map[string]string{
 				"Error":     "username already exists",
+				"CSRFToken": s.csrfToken(r),
+			})
+			return
+		}
+		if errors.Is(err, store.ErrSingleUserOnly) {
+			s.renderTemplate(w, "setup.html", map[string]string{
+				"Error":     "an account already exists for this deployment",
 				"CSRFToken": s.csrfToken(r),
 			})
 			return
@@ -531,6 +538,24 @@ func (s *Server) handleRepoAutoArchive(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/repos", http.StatusFound)
 }
 
+func (s *Server) handleRepoBackupToggle(w http.ResponseWriter, r *http.Request) {
+	id, err := parseRepoID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	desired := r.FormValue("backup_enabled") == "on"
+	if err := s.repos.SetBackupEnabled(id, desired); err != nil {
+		slog.Error("set backup enabled", "id", id, "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+}
+
 // Triggers
 
 func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
@@ -570,7 +595,7 @@ func (s *Server) handleTriggerBackup(w http.ResponseWriter, r *http.Request) {
 		}
 
 		for _, repo := range repos {
-			if repo.GitHubDeleted {
+			if repo.GitHubDeleted || !repo.BackupEnabled {
 				continue
 			}
 			if err := s.engine.CloneRepo(ctx, repo); err != nil {

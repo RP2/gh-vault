@@ -6,6 +6,9 @@
         <table class="table">
             <thead>
                 <tr>
+                    <th>
+                        <input type="checkbox" id="select-all-backup" title="Select all" onchange="document.querySelectorAll('.backup-toggle').forEach(cb => { cb.checked = this.checked; cb.dispatchEvent(new Event('change')); });">
+                    </th>
                     <th>Name</th>
                     <th>Owner</th>
                     <th>Format</th>
@@ -17,6 +20,9 @@
             <tbody>
                 {{range .Repos}}
                 <tr>
+                    <td>
+                        <input type="checkbox" name="backup_enabled" value="on" {{if .BackupEnabled}}checked{{end}} class="backup-toggle" hx-post="/repos/{{.ID}}/backup-toggle" hx-trigger="change" hx-swap="none">
+                    </td>
                     <td><strong>{{.Name}}</strong></td>
                     <td>{{.Owner}}</td>
                     <td>{{.Format}}</td>
@@ -56,6 +62,10 @@
     </div>
     {{else}}
     <p>No repositories found.</p>
+    <div style="margin-top: 1rem">
+        <button hx-post="/trigger/sync" hx-swap="none" hx-disabled-elt="this">Sync from GitHub</button>
+        <p style="margin-top: 0.5rem; font-size: 0.875rem">Fetches your repositories from GitHub.</p>
+    </div>
     {{end}}
 </section>
 {{end}}

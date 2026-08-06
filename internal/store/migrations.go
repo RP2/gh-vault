@@ -80,6 +80,8 @@ CREATE TABLE IF NOT EXISTS secrets (
 );
 `
 
+const v3DDL = `ALTER TABLE repos ADD COLUMN backup_enabled INTEGER NOT NULL DEFAULT 0;`
+
 type migration struct {
 	Version int
 	DDL     string
@@ -88,6 +90,7 @@ type migration struct {
 var migrations = []migration{
 	{Version: 1, DDL: v1DDL},
 	{Version: 2, DDL: v2DDL},
+	{Version: 3, DDL: v3DDL},
 }
 
 func runMigrations(db *sql.DB) error {
