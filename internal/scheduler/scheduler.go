@@ -276,6 +276,10 @@ func (s *CronScheduler) backupJob(ctx context.Context) {
 					return err
 				}
 			}
+			now := time.Now()
+			if err := s.repos.SetLastBackup(r.ID, &now); err != nil {
+				slog.Error("cron backup: set last_backup", "repo", r.Name, "error", err)
+			}
 			return nil
 		})
 	}

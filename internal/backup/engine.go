@@ -274,6 +274,10 @@ func (e *BackupEngine) SwitchToBundle(ctx context.Context, repo model.Repo) erro
 	if err := os.RemoveAll(source); err != nil {
 		return fmt.Errorf("backup: switch to bundle %s/%s step 5: %w", owner, name, err)
 	}
+	now := time.Now()
+	if err := e.repos.SetLastBackup(repo.ID, &now); err != nil {
+		slog.Error("switch: set last_backup", "repo", repo.Name, "error", err)
+	}
 	return nil
 }
 
@@ -371,6 +375,10 @@ func (e *BackupEngine) SwitchToClone(ctx context.Context, repo model.Repo) error
 	// Step 8: remove the bundle.
 	if err := os.RemoveAll(bundlePath); err != nil {
 		return fmt.Errorf("backup: switch to clone %s/%s step 8: %w", owner, name, err)
+	}
+	now := time.Now()
+	if err := e.repos.SetLastBackup(repo.ID, &now); err != nil {
+		slog.Error("switch: set last_backup", "repo", repo.Name, "error", err)
 	}
 	return nil
 }

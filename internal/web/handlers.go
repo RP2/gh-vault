@@ -351,7 +351,8 @@ func (s *Server) handleRepoSwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	ctx, cancel := background()
+	defer cancel()
 	switch repo.Format {
 	case model.FormatClone:
 		err = s.engine.SwitchToBundle(ctx, repo)
@@ -364,7 +365,12 @@ func (s *Server) handleRepoSwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	newFormat := model.FormatClone
+	if repo.Format == model.FormatClone {
+		newFormat = model.FormatBundle
+	}
+	s.createLogEntry(repo.ID, "switch", "success", fmt.Sprintf("switched from %s to %s", repo.Format, newFormat))
+	http.Redirect(w, r, "/repos", http.StatusFound)
 }
 
 func (s *Server) handleRepoArchive(w http.ResponseWriter, r *http.Request) {
@@ -427,6 +433,11 @@ func (s *Server) handleRepoBackup(w http.ResponseWriter, r *http.Request) {
 
 	if repo.GitHubDeleted {
 		http.Error(w, "repository already removed from GitHub", http.StatusConflict)
+		return
+	}
+
+	if !repo.BackupEnabled {
+		http.Error(w, "backup is disabled for this repository", http.StatusConflict)
 		return
 	}
 
@@ -577,11 +588,15 @@ func (s *Server) handleBackupChecked(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		return
 	}
-	ids := r.FormValue("ids")
-	if ids == "" {
+	ids := strings.Split(r.FormValue("ids"), ",")
+	if len(ids) > 200 {
+		http.Error(w, "too many selections (max 200)", http.StatusBadRequest)
 		return
 	}
-	for _, idStr := range strings.Split(ids, ",") {
+	if ids[0] == "" {
+		return
+	}
+	for _, idStr := range ids {
 		id, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
 			continue
@@ -638,11 +653,15 @@ func (s *Server) handleArchiveChecked(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		return
 	}
-	ids := r.FormValue("ids")
-	if ids == "" {
+	ids := strings.Split(r.FormValue("ids"), ",")
+	if len(ids) > 200 {
+		http.Error(w, "too many selections (max 200)", http.StatusBadRequest)
 		return
 	}
-	for _, idStr := range strings.Split(ids, ",") {
+	if ids[0] == "" {
+		return
+	}
+	for _, idStr := range ids {
 		id, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
 			continue
@@ -816,6 +835,12 @@ func (s *Server) handleTriggerBackup(w http.ResponseWriter, r *http.Request) {
 
 // Logs
 
+type logView struct {
+	model.LogEntry
+	RepoOwner string
+	RepoName  string
+}
+
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	page := 1
 	size := 50
@@ -858,8 +883,21 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		pageEntries = pageEntries[:size]
 	}
 
+	views := make([]logView, 0, len(pageEntries))
+	for _, e := range pageEntries {
+		v := logView{LogEntry: e}
+		if e.RepoID != 0 {
+			repo, err := s.repos.Get(e.RepoID)
+			if err == nil {
+				v.RepoOwner = repo.Owner
+				v.RepoName = repo.Name
+			}
+		}
+		views = append(views, v)
+	}
+
 	data := struct {
-		Logs        []model.LogEntry
+		Logs        []logView
 		Page        int
 		Size        int
 		PrevPage    int
@@ -868,7 +906,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		CSRFToken   string
 		CurrentPath string
 	}{
-		Logs:        pageEntries,
+		Logs:        views,
 		Page:        page,
 		Size:        size,
 		PrevPage:    page - 1,

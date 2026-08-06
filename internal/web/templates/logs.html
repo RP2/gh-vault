@@ -1,6 +1,5 @@
 {{define "content"}}
 <section>
-    <h1>Logs</h1>
     {{if .Logs}}
     <div class="table-wrapper">
         <table class="table">
@@ -17,7 +16,7 @@
                 {{range .Logs}}
                 <tr>
                     <td>{{.CreatedAt.Format "2006-01-02 15:04:05"}}</td>
-                    <td>{{.RepoID}}</td>
+                    <td>{{if .RepoOwner}}{{.RepoOwner}}/{{.RepoName}}{{else}}—{{end}}</td>
                     <td>{{.Action}}</td>
                     <td>
                         {{if eq .Status "success"}}

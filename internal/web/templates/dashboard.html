@@ -1,5 +1,4 @@
 {{define "content"}}
-<h1>Dashboard</h1>
 <p>{{.RepoCount}} repos tracked · {{.BackedUp}} backed up · {{.NotBackedUp}} not backed up</p>
 <p>
   <button hx-post="/sync" hx-swap="none">Sync Now</button>
