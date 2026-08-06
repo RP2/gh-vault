@@ -252,12 +252,29 @@ func (s *CronScheduler) backupJob(ctx context.Context) {
 	for _, r := range active {
 		r := r
 		g.Go(func() error {
-			if err := s.engine.CloneRepo(ctx, r); err != nil {
-				slog.Error("scheduler: backup job: clone repo", "owner", r.Owner, "name", r.Name, "error", err)
-				mu.Lock()
-				failed++
-				mu.Unlock()
-				return err
+			if r.Format == model.FormatBundle {
+				if err := s.engine.CloneRepo(ctx, r); err != nil {
+					slog.Error("scheduler: backup job: clone repo", "owner", r.Owner, "name", r.Name, "error", err)
+					mu.Lock()
+					failed++
+					mu.Unlock()
+					return err
+				}
+				if err := s.engine.CreateBundle(ctx, r); err != nil {
+					slog.Error("scheduler: backup job: create bundle", "owner", r.Owner, "name", r.Name, "error", err)
+					mu.Lock()
+					failed++
+					mu.Unlock()
+					return err
+				}
+			} else {
+				if err := s.engine.CloneRepo(ctx, r); err != nil {
+					slog.Error("scheduler: backup job: clone repo", "owner", r.Owner, "name", r.Name, "error", err)
+					mu.Lock()
+					failed++
+					mu.Unlock()
+					return err
+				}
 			}
 			return nil
 		})

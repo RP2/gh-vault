@@ -64,8 +64,7 @@ func (s *SyncerImpl) SyncRepos(ctx context.Context) (SyncResult, error) {
 	}
 
 	if len(ghRepos) == 0 && len(storedRepos) > 0 {
-		slog.Warn("sync: API returned 0 repos but store has repos — token may lack permissions",
-			"store_repos", len(storedRepos))
+		return result, fmt.Errorf("sync: API returned 0 repos but store has %d — token may be invalid or expired", len(storedRepos))
 	}
 
 	slog.Info("sync: starting", "api_repos", len(ghRepos), "store_repos", len(storedRepos))
@@ -120,7 +119,7 @@ func (s *SyncerImpl) SyncRepos(ctx context.Context) (SyncResult, error) {
 		}
 
 		newURL := fmt.Sprintf("https://github.com/%s/%s", owner, name)
-		newBackupPath := fmt.Sprintf("active/%s/%s.git", owner, name)
+		newBackupPath := pathForFormat(stored.Format, owner, name)
 		metadata := repoMetadataFromGitHub(ghRepo, newURL)
 
 		ownerChanged := stored.Owner != owner
@@ -270,11 +269,20 @@ func metadataChanged(stored model.Repo, metadata repoMetadata) bool {
 	if !ptrTimeEqual(stored.LastPush, metadata.lastPush) {
 		return true
 	}
-	expectedBackupPath := fmt.Sprintf("active/%s/%s.git", stored.Owner, stored.Name)
+	expectedBackupPath := pathForFormat(stored.Format, stored.Owner, stored.Name)
 	if stored.BackupPath == nil || *stored.BackupPath != expectedBackupPath {
 		return true
 	}
 	return false
+}
+
+func pathForFormat(f model.RepoFormat, owner, name string) string {
+	switch f {
+	case model.FormatBundle:
+		return fmt.Sprintf("archived/%s/%s.bundle", owner, name)
+	default:
+		return fmt.Sprintf("active/%s/%s.git", owner, name)
+	}
 }
 
 func ptrStringEqual(a, b *string) bool {
@@ -295,7 +303,7 @@ func (s *SyncerImpl) addNewRepo(ghRepo *gh.Repository, result *SyncResult) error
 	owner := ghRepo.GetOwner().GetLogin()
 	name := ghRepo.GetName()
 	url := fmt.Sprintf("https://github.com/%s/%s", owner, name)
-	backupPath := fmt.Sprintf("active/%s/%s.git", owner, name)
+	backupPath := pathForFormat(model.FormatClone, owner, name)
 	metadata := repoMetadataFromGitHub(ghRepo, url)
 
 	newRepo := model.Repo{

@@ -458,10 +458,23 @@ func (s *Server) handleRepoBackup(w http.ResponseWriter, r *http.Request) {
 		}
 		repo = repo2
 
-		if err := s.engine.CloneRepo(ctx, repo); err != nil {
-			slog.Error("backup repo", "owner", repo.Owner, "name", repo.Name, "error", err)
-			s.createLogEntry(repo.ID, "backup", "error", err.Error())
-			return
+		if repo.Format == model.FormatBundle {
+			if err := s.engine.CloneRepo(ctx, repo); err != nil {
+				slog.Error("backup repo", "owner", repo.Owner, "name", repo.Name, "error", err)
+				s.createLogEntry(repo.ID, "backup", "error", err.Error())
+				return
+			}
+			if err := s.engine.CreateBundle(ctx, repo); err != nil {
+				slog.Error("create bundle", "owner", repo.Owner, "name", repo.Name, "error", err)
+				s.createLogEntry(repo.ID, "backup", "error", err.Error())
+				return
+			}
+		} else {
+			if err := s.engine.CloneRepo(ctx, repo); err != nil {
+				slog.Error("backup repo", "owner", repo.Owner, "name", repo.Name, "error", err)
+				s.createLogEntry(repo.ID, "backup", "error", err.Error())
+				return
+			}
 		}
 
 		now := time.Now()
@@ -548,10 +561,23 @@ func (s *Server) handleBackupChecked(w http.ResponseWriter, r *http.Request) {
 		go func(r model.Repo) {
 			ctx, cancel := background()
 			defer cancel()
-			if err := s.engine.CloneRepo(ctx, r); err != nil {
-				slog.Error("backup checked", "repo", r.Name, "error", err)
-				s.createLogEntry(r.ID, "backup", "error", err.Error())
-				return
+			if r.Format == model.FormatBundle {
+				if err := s.engine.CloneRepo(ctx, r); err != nil {
+					slog.Error("backup checked", "repo", r.Name, "error", err)
+					s.createLogEntry(r.ID, "backup", "error", err.Error())
+					return
+				}
+				if err := s.engine.CreateBundle(ctx, r); err != nil {
+					slog.Error("create bundle checked", "repo", r.Name, "error", err)
+					s.createLogEntry(r.ID, "backup", "error", err.Error())
+					return
+				}
+			} else {
+				if err := s.engine.CloneRepo(ctx, r); err != nil {
+					slog.Error("backup checked", "repo", r.Name, "error", err)
+					s.createLogEntry(r.ID, "backup", "error", err.Error())
+					return
+				}
 			}
 			now := time.Now()
 			if err := s.repos.SetLastBackup(r.ID, &now); err != nil {
@@ -722,10 +748,23 @@ func (s *Server) handleTriggerBackup(w http.ResponseWriter, r *http.Request) {
 			if repo.GitHubDeleted || !repo.BackupEnabled {
 				continue
 			}
-			if err := s.engine.CloneRepo(ctx, repo); err != nil {
-				slog.Error("backup repo", "owner", repo.Owner, "name", repo.Name, "error", err)
-				s.createLogEntry(repo.ID, "backup", "error", err.Error())
-				continue
+			if repo.Format == model.FormatBundle {
+				if err := s.engine.CloneRepo(ctx, repo); err != nil {
+					slog.Error("backup repo", "owner", repo.Owner, "name", repo.Name, "error", err)
+					s.createLogEntry(repo.ID, "backup", "error", err.Error())
+					continue
+				}
+				if err := s.engine.CreateBundle(ctx, repo); err != nil {
+					slog.Error("create bundle", "owner", repo.Owner, "name", repo.Name, "error", err)
+					s.createLogEntry(repo.ID, "backup", "error", err.Error())
+					continue
+				}
+			} else {
+				if err := s.engine.CloneRepo(ctx, repo); err != nil {
+					slog.Error("backup repo", "owner", repo.Owner, "name", repo.Name, "error", err)
+					s.createLogEntry(repo.ID, "backup", "error", err.Error())
+					continue
+				}
 			}
 			now := time.Now()
 			if err := s.repos.SetLastBackup(repo.ID, &now); err != nil {

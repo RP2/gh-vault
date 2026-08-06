@@ -154,6 +154,9 @@ func (e *BackupEngine) CloneRepo(ctx context.Context, repo model.Repo) error {
 				return fmt.Errorf("backup: clone %s/%s: %w", repo.Owner, repo.Name, err)
 			}
 			slog.Info("backup: fetch succeeded", "owner", repo.Owner, "name", repo.Name)
+			if err := e.repos.SetVerified(repo.ID, nil); err != nil {
+				slog.Error("backup: clear verified_at", "repo", repo.Name, "error", err)
+			}
 			return nil
 		}
 	} else if !os.IsNotExist(err) {
@@ -165,6 +168,9 @@ func (e *BackupEngine) CloneRepo(ctx context.Context, repo model.Repo) error {
 		return fmt.Errorf("backup: clone %s/%s: %w", repo.Owner, repo.Name, err)
 	}
 	slog.Info("backup: clone succeeded", "owner", repo.Owner, "name", repo.Name)
+	if err := e.repos.SetVerified(repo.ID, nil); err != nil {
+		slog.Error("backup: clear verified_at", "repo", repo.Name, "error", err)
+	}
 	return nil
 }
 
@@ -221,6 +227,9 @@ func (e *BackupEngine) CreateBundle(ctx context.Context, repo model.Repo) error 
 	target := e.archivedPath(repo.Owner, repo.Name)
 	if err := e.createBundle(ctx, repo, target); err != nil {
 		return fmt.Errorf("backup: create bundle %s/%s: %w", repo.Owner, repo.Name, err)
+	}
+	if err := e.repos.SetVerified(repo.ID, nil); err != nil {
+		slog.Error("backup: clear verified_at", "repo", repo.Name, "error", err)
 	}
 	return nil
 }
