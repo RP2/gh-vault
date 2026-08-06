@@ -559,21 +559,11 @@ func (s *Server) handleRepoBackupToggle(w http.ResponseWriter, r *http.Request) 
 // Triggers
 
 func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusAccepted)
-
-	go func() {
-		defer func() {
-			if rec := recover(); rec != nil {
-				slog.Error("panic in background job", "panic", rec)
-			}
-		}()
-		ctx, cancel := background()
-		defer cancel()
-
-		if _, err := s.syncer.SyncRepos(ctx); err != nil {
-			slog.Error("trigger sync", "error", err)
-		}
-	}()
+	ctx := r.Context()
+	if _, err := s.syncer.SyncRepos(ctx); err != nil {
+		slog.Error("trigger sync", "error", err)
+	}
+	http.Redirect(w, r, "/repos", http.StatusFound)
 }
 
 func (s *Server) handleTriggerBackup(w http.ResponseWriter, r *http.Request) {

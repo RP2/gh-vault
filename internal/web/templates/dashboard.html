@@ -5,7 +5,7 @@
 <p>Sync: {{if .SyncRunning}}<span class="badge">Running</span>{{else}}<span class="badge">Idle</span>{{end}}</p>
 <p>Next Sync: {{if .NextSync.IsZero}}<span class="badge">never</span>{{else}}{{.NextSync.Format "2006-01-02 15:04:05"}}{{end}}</p>
 <p>
-    <button hx-post="/trigger/sync" hx-swap="none" hx-disabled-elt="this">Trigger Sync</button>
+    <button hx-post="/trigger/sync" hx-disabled-elt="this">Trigger Sync</button>
     <button hx-post="/trigger/backup" hx-swap="none" hx-disabled-elt="this">Trigger Backup</button>
 </p>
 {{end}}
