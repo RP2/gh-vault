@@ -302,6 +302,9 @@ func (s *CronScheduler) verifyJob(ctx context.Context) {
 
 	var failed int
 	for _, r := range repos {
+		if r.GitHubDeleted || r.BackupPath == nil {
+			continue
+		}
 		if err := s.engine.Verify(ctx, r); err != nil {
 			slog.Error("scheduler: verify job: verify repo", "owner", r.Owner, "name", r.Name, "error", err)
 			failed++

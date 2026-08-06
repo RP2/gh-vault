@@ -113,19 +113,6 @@ func (a *ArchiveImpl) RunEligible(ctx context.Context) error {
 		}); err != nil {
 			logger.Error("workflow: create log entry", "error", err)
 		}
-
-		var lang, url *string
-		if repo.Language != nil {
-			v := *repo.Language
-			lang = &v
-		}
-		if repo.GitHubURL != nil {
-			v := *repo.GitHubURL
-			url = &v
-		}
-		if err := a.repos.SetGitHubMetadata(repo.ID, repo.SizeKB, lang, url, true, repo.LastPush); err != nil {
-			logger.Error("workflow: set github metadata", "error", err)
-		}
 	}
 
 	return nil

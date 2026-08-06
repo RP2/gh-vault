@@ -3,12 +3,10 @@
   <div class="row">
     <label><input type="checkbox" id="select-all"> All</label>
     <button id="btn-backup" disabled hx-post="/backup-checked" hx-vals="getCheckedIds()" hx-swap="none">Backup</button>
-    <button id="btn-archive" disabled hx-post="/archive-checked" hx-vals="getCheckedIds()" hx-swap="none"
-      hx-on::before-request="if(!confirm('Archive selected repositories on GitHub?')){event.preventDefault()}">Archive</button>
+    <button id="btn-archive" disabled hx-post="/archive-checked" hx-vals="getCheckedIds()" hx-swap="none" data-confirm="Archive selected repositories on GitHub?">Archive</button>
     <input type="search" name="q" placeholder="Filter repos...">
   </div>
-  <button hx-post="/sync" hx-target="#repos-table-body" hx-swap="innerHTML"
-    hx-on::before-request="document.getElementById('repos-table-body').innerHTML='<tr><td colspan=4>Syncing...</td></tr>'">
+  <button id="btn-sync" hx-post="/sync" hx-target="#repos-table-body" hx-swap="innerHTML">
     Refresh from GitHub
   </button>
 </div>

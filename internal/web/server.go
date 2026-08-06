@@ -135,6 +135,7 @@ func (s *Server) setupRouter() *chi.Mux {
 	r.Post("/repos/{id}/switch", s.handleRepoSwitch)
 	r.Post("/repos/{id}/archive", s.handleRepoArchive)
 	r.Post("/repos/{id}/backup", s.handleRepoBackup)
+	r.Post("/repos/{id}/verify", s.handleRepoVerify)
 	r.Post("/repos/{id}/backup-toggle", s.handleRepoBackupToggle)
 	r.Post("/repos/{id}/auto-archive", s.handleRepoAutoArchive)
 	r.Post("/backup-checked", s.handleBackupChecked)
@@ -203,4 +204,3 @@ func (w *mimeResponseWriter) WriteHeader(code int) {
 	}
 	w.ResponseWriter.WriteHeader(code)
 }
-

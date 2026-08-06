@@ -136,14 +136,14 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 
 	username := strings.TrimSpace(r.FormValue("username"))
 	password := r.FormValue("password")
-		if username == "" || len(password) < 8 {
+	if username == "" || len(password) < 8 {
 		s.renderTemplate(w, "setup", map[string]string{
 			"Error":       "username is required and password must be at least 8 characters",
 			"CSRFToken":   s.csrfToken(r),
 			"CurrentPath": r.URL.Path,
 		})
-			return
-		}
+		return
+	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	if err != nil {
@@ -156,19 +156,19 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("create user", "username", username, "error", err)
 		if errors.Is(err, store.ErrUsernameExists) {
-		s.renderTemplate(w, "setup", map[string]string{
-			"Error":       "username already exists",
-			"CSRFToken":   s.csrfToken(r),
-			"CurrentPath": r.URL.Path,
-		})
+			s.renderTemplate(w, "setup", map[string]string{
+				"Error":       "username already exists",
+				"CSRFToken":   s.csrfToken(r),
+				"CurrentPath": r.URL.Path,
+			})
 			return
 		}
 		if errors.Is(err, store.ErrSingleUserOnly) {
-		s.renderTemplate(w, "setup", map[string]string{
-			"Error":       "an account already exists for this deployment",
-			"CSRFToken":   s.csrfToken(r),
-			"CurrentPath": r.URL.Path,
-		})
+			s.renderTemplate(w, "setup", map[string]string{
+				"Error":       "an account already exists for this deployment",
+				"CSRFToken":   s.csrfToken(r),
+				"CurrentPath": r.URL.Path,
+			})
 			return
 		}
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -390,25 +390,17 @@ func (s *Server) handleRepoArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if repo.GitHubDeleted {
+		http.Error(w, "repository already removed from GitHub", http.StatusConflict)
+		return
+	}
+
 	ctx := r.Context()
 	if err := s.ghClient.ArchiveRepo(ctx, repo.Owner, repo.Name); err != nil {
 		slog.Error("archive repo", "owner", repo.Owner, "name", repo.Name, "error", err)
 		s.createLogEntry(repo.ID, "archive", "error", err.Error())
 		http.Error(w, "Failed to archive repository", http.StatusInternalServerError)
 		return
-	}
-
-	var lang, url *string
-	if repo.Language != nil {
-		v := *repo.Language
-		lang = &v
-	}
-	if repo.GitHubURL != nil {
-		v := *repo.GitHubURL
-		url = &v
-	}
-	if err := s.repos.SetGitHubMetadata(repo.ID, repo.SizeKB, lang, url, true, repo.LastPush); err != nil {
-		slog.Error("set github metadata after archive", "id", repo.ID, "error", err)
 	}
 
 	s.createLogEntry(repo.ID, "archive", "success", "repository archived on GitHub")
@@ -485,6 +477,52 @@ func (s *Server) handleRepoBackup(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
+func (s *Server) handleRepoVerify(w http.ResponseWriter, r *http.Request) {
+	id, err := parseRepoID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	repo, err := s.repos.Get(id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		slog.Error("get repo", "id", id, "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	if repo.GitHubDeleted {
+		http.Error(w, "repository already removed from GitHub", http.StatusConflict)
+		return
+	}
+	if repo.BackupPath == nil {
+		http.Error(w, "no backup exists yet", http.StatusConflict)
+		return
+	}
+
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				slog.Error("panic in background job", "panic", rec)
+			}
+		}()
+		ctx, cancel := background()
+		defer cancel()
+		if err := s.engine.Verify(ctx, repo); err != nil {
+			slog.Error("verify backup", "repo", repo.Name, "error", err)
+			s.createLogEntry(repo.ID, "verify", "error", err.Error())
+			return
+		}
+		s.createLogEntry(repo.ID, "verify", "success", "manual verify completed")
+	}()
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
 func (s *Server) handleRepoAutoArchive(w http.ResponseWriter, r *http.Request) {
 	id, err := parseRepoID(r)
 	if err != nil {
@@ -558,9 +596,16 @@ func (s *Server) handleBackupChecked(w http.ResponseWriter, r *http.Request) {
 		if !repo.BackupEnabled {
 			continue
 		}
-		go func(r model.Repo) {
+		go func(repoID int64) {
 			ctx, cancel := background()
 			defer cancel()
+
+			// Re-read the repo from the DB so we act on fresh state.
+			r, err := s.repos.Get(repoID)
+			if err != nil || r.GitHubDeleted {
+				return
+			}
+
 			if r.Format == model.FormatBundle {
 				if err := s.engine.CloneRepo(ctx, r); err != nil {
 					slog.Error("backup checked", "repo", r.Name, "error", err)
@@ -584,7 +629,7 @@ func (s *Server) handleBackupChecked(w http.ResponseWriter, r *http.Request) {
 				slog.Error("set last backup", "id", r.ID, "error", err)
 			}
 			s.createLogEntry(r.ID, "backup", "success", "checked backup completed")
-		}(repo)
+		}(repo.ID)
 	}
 	w.WriteHeader(http.StatusAccepted)
 }
@@ -612,30 +657,24 @@ func (s *Server) handleArchiveChecked(w http.ResponseWriter, r *http.Request) {
 		if repo.BackupPath == nil || repo.VerifiedAt == nil {
 			continue
 		}
-		go func(r model.Repo) {
+		go func(repoID int64) {
 			ctx, cancel := background()
 			defer cancel()
+
+			// Re-read the repo from the DB so we act on fresh state.
+			r, err := s.repos.Get(repoID)
+			if err != nil || r.GitHubDeleted {
+				return
+			}
+
 			if err := s.ghClient.ArchiveRepo(ctx, r.Owner, r.Name); err != nil {
 				slog.Error("archive checked", "repo", r.Name, "error", err)
 				s.createLogEntry(r.ID, "archive", "error", err.Error())
 				return
 			}
 
-			var lang, url *string
-			if r.Language != nil {
-				v := *r.Language
-				lang = &v
-			}
-			if r.GitHubURL != nil {
-				v := *r.GitHubURL
-				url = &v
-			}
-			if err := s.repos.SetGitHubMetadata(r.ID, r.SizeKB, lang, url, true, r.LastPush); err != nil {
-				slog.Error("set github metadata after archive", "id", r.ID, "error", err)
-			}
-
 			s.createLogEntry(r.ID, "archive", "success", "repository archived on GitHub")
-		}(repo)
+		}(repo.ID)
 	}
 	w.WriteHeader(http.StatusAccepted)
 }
