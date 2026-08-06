@@ -25,6 +25,7 @@ type SyncResult struct {
 	Renamed     int
 	Transferred int
 	Deleted     int
+	Restored    int
 	Unchanged   int
 	ErrorCount  int
 }
@@ -87,6 +88,26 @@ func (s *SyncerImpl) SyncRepos(ctx context.Context) (SyncResult, error) {
 		logger := slog.With("github_id", ghID, "owner", owner, "name", name)
 
 		stored, ok := storeMap[ghID]
+		if ok && stored.GitHubDeleted {
+			// Repo was previously removed but has reappeared
+			if err := s.repos.UnmarkDeleted(stored.ID); err != nil {
+				logger.Error("sync: unmark deleted", "error", err)
+				result.ErrorCount++
+			} else {
+				logger.Info("sync: repo restored", "repo", owner+"/"+name)
+				result.Restored++
+				if err := s.logs.Create(model.LogEntry{
+					RepoID:  stored.ID,
+					Action:  "sync.restored",
+					Status:  "success",
+					Message: fmt.Sprintf("restored %s/%s from GitHub", owner, name),
+				}); err != nil {
+					logger.Error("sync: create restore log", "error", err)
+				}
+				continue
+			}
+		}
+
 		if !ok {
 			if err := s.addNewRepo(ghRepo, &result); err != nil {
 				logger.Error("sync: add new repo", "error", err)
@@ -199,7 +220,7 @@ func (s *SyncerImpl) SyncRepos(ctx context.Context) (SyncResult, error) {
 		result.Deleted++
 	}
 
-	slog.Info("sync: complete", "added", result.Added, "updated", result.Updated, "removed", result.Deleted, "unchanged", result.Unchanged)
+	slog.Info("sync: complete", "added", result.Added, "updated", result.Updated, "removed", result.Deleted, "restored", result.Restored, "unchanged", result.Unchanged)
 
 	return result, nil
 }

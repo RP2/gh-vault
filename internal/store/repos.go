@@ -24,6 +24,7 @@ type RepoStore interface {
 	SetOwnerName(id int64, owner, name, url string) error
 	SetBackupPath(id int64, path string) error
 	MarkDeleted(id int64) error
+	UnmarkDeleted(id int64) error
 	Delete(id int64) error
 	SetFormat(id int64, f model.RepoFormat, path string) error
 	SetVerified(id int64, at *time.Time) error
@@ -306,6 +307,18 @@ func (s *reposStore) MarkDeleted(id int64) error {
 	result, err := s.db.Exec("UPDATE repos SET github_deleted = TRUE WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("store: mark deleted %d: %w", id, err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *reposStore) UnmarkDeleted(id int64) error {
+	result, err := s.db.Exec("UPDATE repos SET github_deleted = 0 WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("store: unmark deleted %d: %w", id, err)
 	}
 	n, _ := result.RowsAffected()
 	if n == 0 {
