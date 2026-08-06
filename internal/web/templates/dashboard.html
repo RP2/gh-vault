@@ -1,7 +1,7 @@
 {{define "content"}}
 <p>{{.RepoCount}} repositories · {{.BackedUp}} copied to disk · {{.NotBackedUp}} not yet copied</p>
 <p>
-  <button hx-post="/sync" hx-swap="none" title="Fetch latest repository list from GitHub">Sync Now</button>
+  <button hx-post="/sync" hx-swap="none" title="Fetch latest repository list from GitHub">Refresh from GitHub</button>
   <button hx-post="/backup-all" hx-swap="none" title="Copy all enabled repositories to disk">Copy all enabled</button>
 </p>
 

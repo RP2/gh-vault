@@ -17,7 +17,6 @@ import (
 	"github.com/RP2/gh-vault/internal/store"
 	reposync "github.com/RP2/gh-vault/internal/sync"
 	"github.com/RP2/gh-vault/internal/web"
-	"github.com/RP2/gh-vault/internal/workflow"
 )
 
 func main() {
@@ -34,9 +33,8 @@ func main() {
 	ghClient := github.NewClient(tokenProvider)
 	backupEngine := backup.NewEngine(cfg.BackupDir, tokenProvider, db.Repos())
 	syncer := reposync.NewSyncer(ghClient, db.Repos(), db.Logs())
-	archiveWorkflow := workflow.NewArchive(db.Repos(), db.Logs(), db.Settings(), ghClient)
 	sessions := db.Sessions()
-	sched := scheduler.New(db.Settings(), syncer, backupEngine, db.Repos(), db.Logs(), sessions, archiveWorkflow)
+	sched := scheduler.New(db.Settings(), syncer, backupEngine, db.Repos(), db.Logs(), sessions)
 	srv, err := web.NewServer(cfg, db.Users(), db.Settings(), db.Repos(), db.Logs(), db.Secrets(), sessions, backupEngine, syncer, sched, tokenProvider, ghClient)
 	if err != nil {
 		slog.Error("failed to create web server", "error", err)

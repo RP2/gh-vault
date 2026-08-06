@@ -13,7 +13,6 @@ import (
 type Client interface {
 	ListAccessibleRepos(ctx context.Context) ([]*gh.Repository, error)
 	GetRepo(ctx context.Context, owner, name string) (*gh.Repository, error)
-	ArchiveRepo(ctx context.Context, owner, name string) error
 	RateLimitStatus(ctx context.Context) (*gh.Rate, error)
 }
 
@@ -121,19 +120,6 @@ func (c *GhClient) GetRepo(ctx context.Context, owner, name string) (*gh.Reposit
 		return nil, fmt.Errorf("github: get repo %s/%s: %w", owner, name, err)
 	}
 	return repo, nil
-}
-
-func (c *GhClient) ArchiveRepo(ctx context.Context, owner, name string) error {
-	client, err := c.newGitHubClient(ctx)
-	if err != nil {
-		return err
-	}
-	archived := true
-	_, _, err = client.Repositories.Edit(ctx, owner, name, &gh.Repository{Archived: &archived})
-	if err != nil {
-		return fmt.Errorf("github: archive repo %s/%s: %w", owner, name, err)
-	}
-	return nil
 }
 
 func (c *GhClient) RateLimitStatus(ctx context.Context) (*gh.Rate, error) {

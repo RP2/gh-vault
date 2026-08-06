@@ -4,7 +4,6 @@
   --border: #111;
   --muted: #666;
   --danger: #c00;
-  --success: #0a0;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -14,7 +13,6 @@
     --border: #555;
     --muted: #888;
     --danger: #f44;
-    --success: #0f0;
   }
 }
 
@@ -97,7 +95,9 @@ nav a.active,
 
 nav a.active:hover,
 .nav a.active:hover {
-  text-decoration: none;
+  text-decoration: underline;
+  color: inherit;
+  background: none;
 }
 
 nav button,
@@ -274,11 +274,6 @@ th {
   color: var(--danger);
 }
 
-.badge.success {
-  border-color: var(--success);
-  color: var(--success);
-}
-
 .format-badge {
   color: var(--muted);
   font-size: 0.875rem;
@@ -386,11 +381,6 @@ details.dropdown > .menu a:hover {
 .alert.error {
   border-color: var(--danger);
   color: var(--danger);
-}
-
-.alert.success {
-  border-color: var(--success);
-  color: var(--success);
 }
 
 .auth {

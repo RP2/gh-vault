@@ -337,239 +337,6 @@ func (s *Server) renderReposTbody(w http.ResponseWriter, r *http.Request) error 
 	return t.ExecuteTemplate(w, "repos-tbody", map[string]any{"Repos": active})
 }
 
-func (s *Server) handleRepoSwitch(w http.ResponseWriter, r *http.Request) {
-	id, err := parseRepoID(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	repo, err := s.repos.Get(id)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			http.NotFound(w, r)
-			return
-		}
-		slog.Error("get repo", "id", id, "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	ctx, cancel := background()
-	defer cancel()
-	switch repo.Format {
-	case model.FormatClone:
-		err = s.engine.SwitchToBundle(ctx, repo)
-	default:
-		err = s.engine.SwitchToClone(ctx, repo)
-	}
-	if err != nil {
-		slog.Error("switch repo format", "owner", repo.Owner, "name", repo.Name, "format", repo.Format, "error", err)
-		http.Error(w, "Failed to switch format", http.StatusInternalServerError)
-		return
-	}
-
-	newFormat := model.FormatClone
-	if repo.Format == model.FormatClone {
-		newFormat = model.FormatBundle
-	}
-	s.createLogEntry(repo.ID, "switch", "success", fmt.Sprintf("switched from %s to %s", repo.Format, newFormat))
-	http.Redirect(w, r, "/repos", http.StatusFound)
-}
-
-func (s *Server) handleRepoArchive(w http.ResponseWriter, r *http.Request) {
-	id, err := parseRepoID(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	repo, err := s.repos.Get(id)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			http.NotFound(w, r)
-			return
-		}
-		slog.Error("get repo", "id", id, "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	if repo.BackupPath == nil || repo.VerifiedAt == nil {
-		http.Error(w, "backup must exist and be verified before archiving", http.StatusBadRequest)
-		return
-	}
-
-	if repo.GitHubDeleted {
-		http.Error(w, "repository already removed from GitHub", http.StatusConflict)
-		return
-	}
-
-	ctx := r.Context()
-	if err := s.ghClient.ArchiveRepo(ctx, repo.Owner, repo.Name); err != nil {
-		slog.Error("archive repo", "owner", repo.Owner, "name", repo.Name, "error", err)
-		s.createLogEntry(repo.ID, "archive", "error", err.Error())
-		http.Error(w, "Failed to archive repository", http.StatusInternalServerError)
-		return
-	}
-
-	s.createLogEntry(repo.ID, "archive", "success", "repository archived on GitHub")
-	http.Redirect(w, r, "/repos", http.StatusFound)
-}
-
-func (s *Server) handleRepoBackup(w http.ResponseWriter, r *http.Request) {
-	id, err := parseRepoID(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	repo, err := s.repos.Get(id)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			http.NotFound(w, r)
-			return
-		}
-		slog.Error("get repo", "id", id, "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	if repo.GitHubDeleted {
-		http.Error(w, "repository already removed from GitHub", http.StatusConflict)
-		return
-	}
-
-	if !repo.BackupEnabled {
-		http.Error(w, "backup is disabled for this repository", http.StatusConflict)
-		return
-	}
-
-	w.WriteHeader(http.StatusAccepted)
-
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("panic in background job", "panic", r)
-			}
-		}()
-		ctx, cancel := background()
-		defer cancel()
-
-		// Re-read the repo from the DB so we act on fresh state — a concurrent
-		// sync or archive may have flipped GitHubDeleted between request
-		// acceptance and the goroutine starting.
-		repo2, err := s.repos.Get(repo.ID)
-		if err != nil || repo2.GitHubDeleted {
-			return
-		}
-		repo = repo2
-
-		if repo.Format == model.FormatBundle {
-			if err := s.engine.CloneRepo(ctx, repo); err != nil {
-				slog.Error("backup repo", "owner", repo.Owner, "name", repo.Name, "error", err)
-				s.createLogEntry(repo.ID, "backup", "error", err.Error())
-				return
-			}
-			if err := s.engine.CreateBundle(ctx, repo); err != nil {
-				slog.Error("create bundle", "owner", repo.Owner, "name", repo.Name, "error", err)
-				s.createLogEntry(repo.ID, "backup", "error", err.Error())
-				return
-			}
-		} else {
-			if err := s.engine.CloneRepo(ctx, repo); err != nil {
-				slog.Error("backup repo", "owner", repo.Owner, "name", repo.Name, "error", err)
-				s.createLogEntry(repo.ID, "backup", "error", err.Error())
-				return
-			}
-		}
-
-		now := time.Now()
-		if err := s.repos.SetLastBackup(repo.ID, &now); err != nil {
-			slog.Error("set last backup", "id", repo.ID, "error", err)
-		}
-		s.createLogEntry(repo.ID, "backup", "success", "manual backup completed")
-	}()
-}
-
-func (s *Server) handleRepoVerify(w http.ResponseWriter, r *http.Request) {
-	id, err := parseRepoID(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	repo, err := s.repos.Get(id)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			http.NotFound(w, r)
-			return
-		}
-		slog.Error("get repo", "id", id, "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	if repo.GitHubDeleted {
-		http.Error(w, "repository already removed from GitHub", http.StatusConflict)
-		return
-	}
-	if repo.BackupPath == nil {
-		http.Error(w, "no backup exists yet", http.StatusConflict)
-		return
-	}
-
-	go func() {
-		defer func() {
-			if rec := recover(); rec != nil {
-				slog.Error("panic in background job", "panic", rec)
-			}
-		}()
-		ctx, cancel := background()
-		defer cancel()
-		if err := s.engine.Verify(ctx, repo); err != nil {
-			slog.Error("verify backup", "repo", repo.Name, "error", err)
-			s.createLogEntry(repo.ID, "verify", "error", err.Error())
-			return
-		}
-		s.createLogEntry(repo.ID, "verify", "success", "manual verify completed")
-	}()
-
-	w.WriteHeader(http.StatusAccepted)
-}
-
-func (s *Server) handleRepoAutoArchive(w http.ResponseWriter, r *http.Request) {
-	id, err := parseRepoID(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	repo, err := s.repos.Get(id)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			http.NotFound(w, r)
-			return
-		}
-		slog.Error("get repo", "id", id, "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-
-	desired := r.FormValue("auto_archive") == "on"
-	if err := s.repos.SetAutoArchive(repo.ID, desired); err != nil {
-		slog.Error("set auto archive", "id", repo.ID, "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	http.Redirect(w, r, "/repos", http.StatusFound)
-}
-
 func (s *Server) handleRepoBackupToggle(w http.ResponseWriter, r *http.Request) {
 	id, err := parseRepoID(r)
 	if err != nil {
@@ -586,6 +353,48 @@ func (s *Server) handleRepoBackupToggle(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+}
+
+func (s *Server) handleBulkSetFormat(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		return
+	}
+	ids := r.FormValue("ids")
+	format := r.FormValue("format") // "clone" or "bundle"
+	if ids == "" || (format != "clone" && format != "bundle") {
+		return
+	}
+	for _, idStr := range strings.Split(ids, ",") {
+		id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
+		if err != nil {
+			continue
+		}
+		if err := s.repos.SetFormat(id, model.RepoFormat(format), ""); err != nil {
+			slog.Error("bulk set format", "id", id, "error", err)
+		}
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (s *Server) handleBulkSetBackup(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		return
+	}
+	ids := r.FormValue("ids")
+	enabled := r.FormValue("backup_enabled") == "on"
+	if ids == "" {
+		return
+	}
+	for _, idStr := range strings.Split(ids, ",") {
+		id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
+		if err != nil {
+			continue
+		}
+		if err := s.repos.SetBackupEnabled(id, enabled); err != nil {
+			slog.Error("bulk set backup", "id", id, "error", err)
+		}
+	}
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func (s *Server) handleBackupChecked(w http.ResponseWriter, r *http.Request) {
@@ -648,55 +457,6 @@ func (s *Server) handleBackupChecked(w http.ResponseWriter, r *http.Request) {
 				slog.Error("set last backup", "id", r.ID, "error", err)
 			}
 			s.createLogEntry(r.ID, "backup", "success", "checked backup completed")
-		}(repo.ID)
-	}
-	w.WriteHeader(http.StatusAccepted)
-}
-
-func (s *Server) handleArchiveChecked(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		return
-	}
-	ids := strings.Split(r.FormValue("ids"), ",")
-	if len(ids) > 200 {
-		http.Error(w, "too many selections (max 200)", http.StatusBadRequest)
-		return
-	}
-	if ids[0] == "" {
-		return
-	}
-	for _, idStr := range ids {
-		id, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
-			continue
-		}
-		repo, err := s.repos.Get(id)
-		if err != nil {
-			continue
-		}
-		if repo.GitHubDeleted {
-			continue
-		}
-		if repo.BackupPath == nil || repo.VerifiedAt == nil {
-			continue
-		}
-		go func(repoID int64) {
-			ctx, cancel := background()
-			defer cancel()
-
-			// Re-read the repo from the DB so we act on fresh state.
-			r, err := s.repos.Get(repoID)
-			if err != nil || r.GitHubDeleted {
-				return
-			}
-
-			if err := s.ghClient.ArchiveRepo(ctx, r.Owner, r.Name); err != nil {
-				slog.Error("archive checked", "repo", r.Name, "error", err)
-				s.createLogEntry(r.ID, "archive", "error", err.Error())
-				return
-			}
-
-			s.createLogEntry(r.ID, "archive", "success", "repository archived on GitHub")
 		}(repo.ID)
 	}
 	w.WriteHeader(http.StatusAccepted)
@@ -956,7 +716,6 @@ func (s *Server) handleSettingsPost(w http.ResponseWriter, r *http.Request) {
 
 	cron := r.FormValue("cron_schedule")
 	dryRun := r.FormValue("dry_run")
-	autoArchiveDays := r.FormValue("auto_archive_days")
 	logRetentionDays := r.FormValue("log_retention_days")
 
 	dryRunStr := "false"
@@ -978,11 +737,6 @@ func (s *Server) handleSettingsPost(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.settings.Set("dry_run", dryRunStr); err != nil {
 		slog.Error("set dry_run", "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	if err := s.settings.Set("auto_archive_days", autoArchiveDays); err != nil {
-		slog.Error("set auto_archive_days", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}

@@ -17,7 +17,6 @@ import (
 	"github.com/RP2/gh-vault/internal/model"
 	"github.com/RP2/gh-vault/internal/store"
 	reposync "github.com/RP2/gh-vault/internal/sync"
-	"github.com/RP2/gh-vault/internal/workflow"
 )
 
 // Scheduler coordinates background cron jobs for gh-vault.
@@ -37,7 +36,6 @@ type CronScheduler struct {
 	settings store.SettingsStore
 	syncer   reposync.Syncer
 	engine   backup.Engine
-	archive  workflow.ArchiveWorkflow
 	repos    store.RepoStore
 	logs     store.LogStore
 	sessions store.SessionStore
@@ -55,7 +53,6 @@ func New(
 	repos store.RepoStore,
 	logs store.LogStore,
 	sessions store.SessionStore,
-	archive workflow.ArchiveWorkflow,
 ) *CronScheduler {
 	return &CronScheduler{
 		settings: settings,
@@ -64,7 +61,6 @@ func New(
 		repos:    repos,
 		logs:     logs,
 		sessions: sessions,
-		archive:  archive,
 	}
 }
 
@@ -181,7 +177,6 @@ func (s *CronScheduler) addJobs(syncExpr string) error {
 	}{
 		{name: "sync", expr: syncExpr, fn: s.syncJob},
 		{name: "backup", expr: "0 2 * * *", fn: s.backupJob},
-		{name: "auto_archive", expr: "0 3 * * *", fn: s.autoArchiveJob},
 		{name: "verify", expr: "0 4 * * 0", fn: s.verifyJob},
 		{name: "log_cleanup", expr: "0 5 * * *", fn: s.logCleanupJob},
 		{name: "session_cleanup", expr: "5 5 * * *", fn: s.sessionCleanupJob},
@@ -287,14 +282,6 @@ func (s *CronScheduler) backupJob(ctx context.Context) {
 		slog.Error("scheduler: backup job failed", "error", err)
 	}
 	slog.Info("scheduler: backup job completed", "repos", len(active), "failed", failed)
-}
-
-func (s *CronScheduler) autoArchiveJob(ctx context.Context) {
-	if err := s.archive.RunEligible(ctx); err != nil {
-		slog.Error("scheduler: auto archive job failed", "error", err)
-		return
-	}
-	slog.Info("scheduler: auto archive job completed")
 }
 
 func (s *CronScheduler) verifyJob(ctx context.Context) {

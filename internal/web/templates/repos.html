@@ -1,86 +1,75 @@
 {{define "content"}}
-<div class="repos-header">
-  <div class="row">
-    <label><input type="checkbox" id="select-all" title="Select all repositories"> All</label>
-    <button id="btn-backup" disabled hx-post="/backup-checked" hx-vals="getCheckedIds()" hx-swap="none" title="Copy all checked repositories to disk">Copy all enabled to disk</button>
-    <button id="btn-archive" disabled hx-post="/archive-checked" hx-vals="getCheckedIds()" hx-swap="none" data-confirm="Archive selected repositories on GitHub?" title="Mark selected repositories as archived on GitHub (prevents pushes)">Archive on GitHub</button>
-    <input type="search" name="q" placeholder="Filter repos..." title="Filter repositories by name">
+<section>
+  <div class="repos-header">
+    <div class="row">
+      <label><input type="checkbox" id="select-all" title="Select all"> All</label>
+      <button id="btn-set-clone" disabled title="Set selected repos to clone format">Set to clone</button>
+      <button id="btn-set-bundle" disabled title="Set selected repos to bundle format">Set to bundle</button>
+      <button id="btn-enable-backup" disabled title="Include selected repos in backups">Enable</button>
+      <button id="btn-disable-backup" disabled title="Exclude selected repos from backups">Disable</button>
+    </div>
+    <div class="row">
+      <input type="search" name="q" placeholder="Filter repos...">
+      <button hx-post="/sync" hx-target="#repos-table-body" title="Fetch latest repository list from GitHub">Refresh from GitHub</button>
+    </div>
   </div>
-  <button id="btn-sync" hx-post="/sync" hx-target="#repos-table-body" hx-swap="innerHTML" title="Fetch latest repository list from GitHub using your token">
-    Refresh from GitHub
-  </button>
-</div>
 
-<table>
-  <thead>
-    <tr>
-      <th><input type="checkbox" id="select-all" title="Select all"></th>
-      <th>Repository</th>
-      <th>Last Backup</th>
-      <th>Status</th>
-      <th></th>
-    </tr>
-  </thead>
-  <tbody id="repos-table-body">
-    {{template "repos-tbody" .}}
-  </tbody>
-</table>
+  <div class="table-scroll">
+    <div id="repos-table">
+    {{if .Repos}}
+    <table>
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="select-all" title="Select all"></th>
+          <th>Repository</th>
+          <th>Last Backup</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="repos-table-body">
+        {{template "repos-tbody" .}}
+      </tbody>
+    </table>
+    {{else}}
+    <p>No repositories. <button hx-post="/sync" hx-target="#repos-table-body">Refresh from GitHub</button> to get started.</p>
+    {{end}}
+    </div>
+  </div>
 
-{{if .DeletedCount}}
-<details class="deleted-section">
-  <summary>{{.DeletedCount}} removed from GitHub</summary>
-  <table>
-    <thead><tr><th>Repository</th><th>Stored as</th><th>Last copied</th></tr></thead>
-    <tbody>
-      {{range .DeletedRepos}}
-      <tr>
-        <td><s>{{.Owner}}/{{.Name}}</s></td>
-        <td>
-          {{if eq .Format "clone"}}bare clone
-          {{else if eq .Format "bundle"}}bundle
-          {{else}}not copied{{end}}
-        </td>
-        <td>{{if .LastBackup}}{{.LastBackup.Format "2006-01-02"}}{{else}}never{{end}}</td>
-      </tr>
-      {{end}}
-    </tbody>
-  </table>
-</details>
-{{end}}
+  {{if .DeletedCount}}
+  <details class="deleted-section">
+    <summary>{{.DeletedCount}} removed from GitHub</summary>
+    <table>
+      <thead><tr><th>Repository</th><th>Stored as</th><th>Last copied</th></tr></thead>
+      <tbody>
+        {{range .DeletedRepos}}
+        <tr>
+          <td><s>{{.Owner}}/{{.Name}}</s></td>
+          <td>{{if eq .Format "clone"}}bare clone{{else if eq .Format "bundle"}}bundle{{else}}not copied{{end}}</td>
+          <td>{{if .LastBackup}}{{.LastBackup.Format "2006-01-02"}}{{else}}never{{end}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </details>
+  {{end}}
+</section>
 {{end}}
 
 {{define "repos-tbody"}}
 {{range .Repos}}
 <tr>
-  <td>
-    <input type="checkbox" name="id" value="{{.ID}}" class="repo-check" title="Select for bulk action">
-    <label title="Include this repository in automated backups" style="font-size:0.75rem">
-      <input type="checkbox" {{if .BackupEnabled}}checked{{end}}
-        hx-post="/repos/{{.ID}}/backup-toggle"
-        hx-swap="none"
-        hx-vals='{"backup_enabled":"{{if .BackupEnabled}}off{{else}}on{{end}}"}'>
-      auto
-    </label>
-  </td>
-  <td>
-    <strong>{{.Owner}}/{{.Name}}</strong>
-  </td>
+  <td><input type="checkbox" name="id" value="{{.ID}}" class="repo-check" title="Select for batch operation"></td>
+  <td>{{.Owner}}/{{.Name}}</td>
   <td>{{if .LastBackup}}{{.LastBackup.Format "2006-01-02 15:04"}}{{else}}—{{end}}</td>
   <td>
     {{if .GitHubDeleted}}<span class="badge error">removed from GitHub</span>
     {{else if .GitHubArchived}}<span class="badge">archived on GitHub</span>
-    {{else if eq .Format "clone"}}{{if .VerifiedAt}}<span class="badge success">cloned ✓</span>{{else}}<span class="badge">cloned</span>{{end}}
-    {{else if eq .Format "bundle"}}{{if .VerifiedAt}}<span class="badge success">bundled ✓</span>{{else}}<span class="badge">bundled</span>{{end}}
-    {{else}}<span class="badge">not copied</span>{{end}}
-  </td>
-  <td class="actions">
-    <button hx-post="/repos/{{.ID}}/backup" hx-swap="none" title="Copy this repository to disk as a bare git clone">Copy to disk</button>
-    <button hx-post="/repos/{{.ID}}/switch" hx-swap="none" title="Switch between bare clone and bundle format">Switch to {{if eq .Format "clone"}}bundle{{else}}clone{{end}}</button>
-    <button hx-post="/repos/{{.ID}}/verify" hx-swap="none" title="Check backup integrity">Verify</button>
-    <button hx-post="/repos/{{.ID}}/archive" hx-swap="none" data-confirm="Archive this repository on GitHub?" title="Mark as archived on GitHub (prevents pushes)">Archive on GitHub</button>
+    {{else if .LastBackup}}<span class="badge">backed up{{if .VerifiedAt}} ✓{{end}}</span>
+    {{else}}<span class="badge">no backup</span>{{end}}
   </td>
 </tr>
 {{else}}
-<tr><td colspan="5">No repositories found.</td></tr>
+<tr><td colspan="4">No repositories found.</td></tr>
 {{end}}
 {{end}}

@@ -132,14 +132,10 @@ func (s *Server) setupRouter() *chi.Mux {
 
 	// Repos
 	r.Get("/repos", s.handleReposList)
-	r.Post("/repos/{id}/switch", s.handleRepoSwitch)
-	r.Post("/repos/{id}/archive", s.handleRepoArchive)
-	r.Post("/repos/{id}/backup", s.handleRepoBackup)
-	r.Post("/repos/{id}/verify", s.handleRepoVerify)
 	r.Post("/repos/{id}/backup-toggle", s.handleRepoBackupToggle)
-	r.Post("/repos/{id}/auto-archive", s.handleRepoAutoArchive)
 	r.Post("/backup-checked", s.handleBackupChecked)
-	r.Post("/archive-checked", s.handleArchiveChecked)
+	r.Post("/bulk/set-format", s.handleBulkSetFormat)
+	r.Post("/bulk/set-backup", s.handleBulkSetBackup)
 
 	// Triggers
 	r.Post("/sync", s.handleTriggerSync)

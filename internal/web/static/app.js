@@ -40,7 +40,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-// Archive confirmation via data-confirm attribute
+// Confirmation via data-confirm attribute
 document.addEventListener('DOMContentLoaded', function() {
     document.addEventListener('htmx:confirm', function(e) {
         var trigger = e.detail.elt;
@@ -79,16 +79,36 @@ document.addEventListener('DOMContentLoaded', function() {
 
 function updateActionButtons() {
     var checked = document.querySelectorAll('.repo-check:checked').length;
-    var backupBtn = document.getElementById('btn-backup');
-    var archiveBtn = document.getElementById('btn-archive');
-    if (backupBtn) backupBtn.disabled = checked === 0;
-    if (archiveBtn) archiveBtn.disabled = checked === 0;
+    ['btn-set-clone', 'btn-set-bundle', 'btn-enable-backup', 'btn-disable-backup'].forEach(function(id) {
+        var btn = document.getElementById(id);
+        if (btn) btn.disabled = checked === 0;
+    });
 }
 
-function getCheckedIds() {
-    var ids = [];
-    document.querySelectorAll('.repo-check:checked').forEach(function(cb) {
-        ids.push(cb.value);
-    });
-    return {ids: ids.join(',')};
-}
+// Wire bulk action buttons
+document.addEventListener('DOMContentLoaded', function() {
+    function setupBulkButton(btnId, url, extraParams) {
+        var btn = document.getElementById(btnId);
+        if (!btn) return;
+        btn.addEventListener('click', function() {
+            var ids = [];
+            document.querySelectorAll('.repo-check:checked').forEach(function(cb) {
+                ids.push(cb.value);
+            });
+            if (ids.length === 0) return;
+            var params = Object.assign({ids: ids.join(',')}, extraParams);
+            fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRF-Token': (document.querySelector('meta[name="csrf-token"]') || {}).content || ''
+                },
+                body: new URLSearchParams(params)
+            });
+        });
+    }
+    setupBulkButton('btn-set-clone', '/bulk/set-format', {format: 'clone'});
+    setupBulkButton('btn-set-bundle', '/bulk/set-format', {format: 'bundle'});
+    setupBulkButton('btn-enable-backup', '/bulk/set-backup', {backup_enabled: 'on'});
+    setupBulkButton('btn-disable-backup', '/bulk/set-backup', {backup_enabled: 'off'});
+});
