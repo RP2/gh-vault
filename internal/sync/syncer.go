@@ -229,6 +229,7 @@ type repoMetadata struct {
 	language *string
 	url      *string
 	archived bool
+	private  bool
 	lastPush *time.Time
 }
 
@@ -249,6 +250,7 @@ func repoMetadataFromGitHub(r *gh.Repository, url string) repoMetadata {
 		language: language,
 		url:      &url,
 		archived: r.GetArchived(),
+		private:  r.GetPrivate(),
 		lastPush: lastPush,
 	}
 }
@@ -317,6 +319,7 @@ func (s *SyncerImpl) addNewRepo(ghRepo *gh.Repository, result *SyncResult) error
 		SizeKB:         metadata.sizeKB,
 		LastPush:       metadata.lastPush,
 		GitHubArchived: metadata.archived,
+		Private:        metadata.private,
 		AutoArchive:    false,
 	}
 

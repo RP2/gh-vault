@@ -60,13 +60,20 @@
 {{range .Repos}}
 <tr>
   <td><input type="checkbox" name="id" value="{{.ID}}" class="repo-check" title="Select for batch operation"></td>
-  <td>{{.Owner}}/{{.Name}}</td>
+  <td>
+    {{.Owner}}/{{.Name}}
+    <span class="visibility-badge">
+      {{- if .GitHubArchived -}}
+        {{- if .Private -}}private archive{{- else -}}public archive{{- end -}}
+      {{- else -}}
+        {{- if .Private -}}private{{- else -}}public{{- end -}}
+      {{- end -}}
+    </span>
+  </td>
   <td>{{if .LastBackup}}{{.LastBackup.Format "2006-01-02 15:04"}}{{else}}—{{end}}</td>
   <td>
-    {{if .GitHubDeleted}}<span class="badge error">removed from GitHub</span>
-    {{else if .GitHubArchived}}<span class="badge">archived on GitHub</span>
-    {{else if .LastBackup}}<span class="badge">backed up{{if .VerifiedAt}} ✓{{end}}</span>
-    {{else}}<span class="badge">no backup</span>{{end}}
+    {{if .LastBackup}}<span>backed up{{if .VerifiedAt}} ✓{{end}}</span>
+    {{else}}<span>—</span>{{end}}
   </td>
 </tr>
 {{else}}

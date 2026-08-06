@@ -82,6 +82,8 @@ CREATE TABLE IF NOT EXISTS secrets (
 
 const v3DDL = `ALTER TABLE repos ADD COLUMN backup_enabled INTEGER NOT NULL DEFAULT 0;`
 
+const v4DDL = `ALTER TABLE repos ADD COLUMN private INTEGER NOT NULL DEFAULT 0;`
+
 type migration struct {
 	Version int
 	DDL     string
@@ -91,6 +93,7 @@ var migrations = []migration{
 	{Version: 1, DDL: v1DDL},
 	{Version: 2, DDL: v2DDL},
 	{Version: 3, DDL: v3DDL},
+	{Version: 4, DDL: v4DDL},
 }
 
 func runMigrations(db *sql.DB) error {

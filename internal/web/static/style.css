@@ -280,6 +280,12 @@ th {
   margin-left: 0.5rem;
 }
 
+.visibility-badge {
+  color: var(--muted);
+  font-size: 0.75rem;
+  margin-left: 0.25rem;
+}
+
 td.actions {
   display: flex;
   flex-wrap: nowrap;
