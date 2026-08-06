@@ -163,6 +163,8 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.setupDone = true
+
 	if err := s.createSession(w, userID); err != nil {
 		slog.Error("create session", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -765,7 +767,6 @@ func (s *Server) handleSettingsTokenPost(w http.ResponseWriter, r *http.Request)
 	ghClient := gh.NewClient(httpClient)
 	if _, _, err := ghClient.Repositories.ListByAuthenticatedUser(ctx, &gh.RepositoryListByAuthenticatedUserOptions{
 		ListOptions: gh.ListOptions{PerPage: 1},
-		Type:        "owner",
 	}); err != nil {
 		slog.Error("validate token", "error", err)
 		http.Error(w, "Invalid token", http.StatusBadRequest)

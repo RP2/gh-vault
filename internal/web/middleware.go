@@ -19,21 +19,14 @@ func (s *Server) stateMachine(next http.Handler) http.Handler {
 			return
 		}
 
-		count, err := s.users.Count()
-		if err != nil {
-			slog.Error("state machine: count users", "error", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-
 		// Step 1: No users → redirect to /setup
-		if count == 0 && path != "/setup" {
+		if !s.setupDone && path != "/setup" {
 			http.Redirect(w, r, "/setup", http.StatusFound)
 			return
 		}
 
 		// Step 1b: Users exist, path is /setup → 404
-		if count > 0 && path == "/setup" {
+		if s.setupDone && path == "/setup" {
 			http.NotFound(w, r)
 			return
 		}

@@ -42,7 +42,7 @@ type Server struct {
 	sched         scheduler.Scheduler
 	tokenProvider github.TokenProvider
 	ghClient      github.Client
-
+	setupDone     bool
 }
 
 func NewServer(
@@ -64,6 +64,11 @@ func NewServer(
 		return nil, fmt.Errorf("web: parse layout template: %w", err)
 	}
 
+	count, err := users.Count()
+	if err != nil {
+		return nil, fmt.Errorf("web: count users: %w", err)
+	}
+
 	s := &Server{
 		cfg:           cfg,
 		users:         users,
@@ -78,6 +83,7 @@ func NewServer(
 		tokenProvider: tokenProvider,
 		ghClient:      ghClient,
 		tmpl:          tmpl,
+		setupDone:     count > 0,
 	}
 	s.router = s.setupRouter()
 	return s, nil

@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	gh "github.com/google/go-github/v69/github"
 	"golang.org/x/oauth2"
 )
 
 type Client interface {
-	ListOwnedRepos(ctx context.Context) ([]*gh.Repository, error)
+	ListAccessibleRepos(ctx context.Context) ([]*gh.Repository, error)
 	GetRepo(ctx context.Context, owner, name string) (*gh.Repository, error)
 	ArchiveRepo(ctx context.Context, owner, name string) error
 	DeleteRepo(ctx context.Context, owner, name string) error
@@ -40,38 +41,41 @@ func (c *GhClient) newGitHubClient(ctx context.Context) (*gh.Client, error) {
 	return gh.NewClient(httpClient), nil
 }
 
-func (c *GhClient) ListOwnedRepos(ctx context.Context) ([]*gh.Repository, error) {
+func (c *GhClient) ListAccessibleRepos(ctx context.Context) ([]*gh.Repository, error) {
 	client, err := c.newGitHubClient(ctx)
 	if err != nil {
 		return nil, err
 	}
 
+	// Classic PATs and fine-grained tokens both work with the unfiltered
+	// endpoint. The token's permissions determine which repos are returned.
 	opts := &gh.RepositoryListByAuthenticatedUserOptions{
 		ListOptions: gh.ListOptions{PerPage: 100},
-		Type:        "",
 	}
 
-	var owned []*gh.Repository
+	var accessible []*gh.Repository
 	for {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("github: list repos cancelled: %w", ctx.Err())
 		}
 		repos, resp, err := client.Repositories.ListByAuthenticatedUser(ctx, opts)
 		if err != nil {
-			return nil, fmt.Errorf("github: list owned repos: %w", err)
+			return nil, fmt.Errorf("github: list accessible repos: %w", err)
 		}
+		slog.Debug("github: page", "repos_on_page", len(repos), "page", opts.Page)
 		for _, r := range repos {
 			if r.GetFork() {
 				continue
 			}
-			owned = append(owned, r)
+			accessible = append(accessible, r)
 		}
 		if resp.NextPage == 0 {
 			break
 		}
 		opts.Page = resp.NextPage
 	}
-	return owned, nil
+	slog.Info("github: listed repos", "total", len(accessible))
+	return accessible, nil
 }
 
 func (c *GhClient) GetRepo(ctx context.Context, owner, name string) (*gh.Repository, error) {

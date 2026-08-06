@@ -53,9 +53,9 @@ func NewSyncer(client github.Client, repos store.RepoStore, logs store.LogStore)
 func (s *SyncerImpl) SyncRepos(ctx context.Context) (SyncResult, error) {
 	var result SyncResult
 
-	ghRepos, err := s.client.ListOwnedRepos(ctx)
+	ghRepos, err := s.client.ListAccessibleRepos(ctx)
 	if err != nil {
-		return result, fmt.Errorf("sync: list owned repos: %w", err)
+		return result, fmt.Errorf("sync: list accessible repos: %w", err)
 	}
 
 	storedRepos, err := s.repos.List()
