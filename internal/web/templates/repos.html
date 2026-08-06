@@ -1,6 +1,7 @@
 {{define "content"}}
 <section>
     <h1>Repositories</h1>
+    <p><button hx-post="/trigger/sync">Refresh from GitHub</button></p>
     {{if .Repos}}
     <div class="table-wrapper">
         <table class="table">
@@ -62,10 +63,6 @@
     </div>
     {{else}}
     <p>No repositories found.</p>
-    <div style="margin-top: 1rem">
-        <button hx-post="/trigger/sync" hx-disabled-elt="this">Sync from GitHub</button>
-        <p style="margin-top: 0.5rem; font-size: 0.875rem">Fetches your repositories from GitHub.</p>
-    </div>
     {{end}}
 </section>
 {{end}}
