@@ -259,19 +259,23 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var backedUp, notBackedUp int
+	var total, backedUp, notCopied int
 	for _, repo := range repos {
+		if repo.GitHubDeleted {
+			continue
+		}
+		total++
 		if repo.LastBackup != nil {
 			backedUp++
 		} else {
-			notBackedUp++
+			notCopied++
 		}
 	}
 
 	data := map[string]any{
-		"RepoCount":   len(repos),
+		"RepoCount":   total,
 		"BackedUp":    backedUp,
-		"NotBackedUp": notBackedUp,
+		"NotBackedUp": notCopied,
 		"RecentLogs":  logs,
 		"CSRFToken":   s.csrfToken(r),
 		"CurrentPath": r.URL.Path,

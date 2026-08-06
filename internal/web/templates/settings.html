@@ -12,24 +12,24 @@
         <form method="POST" action="/settings">
             <input type="hidden" name="csrf" value="{{.CSRFToken}}">
             <div class="form-group">
-                <label for="cron_schedule">Cron Schedule</label>
-                <input type="text" id="cron_schedule" name="cron_schedule" value="{{.Settings.CronSchedule}}">
+                <label for="cron_schedule">Sync schedule (cron expression)</label>
+                <input type="text" id="cron_schedule" name="cron_schedule" value="{{.Settings.CronSchedule}}" title="Cron expression that controls how often gh-vault syncs with GitHub">
             </div>
             <div class="form-group">
                 <label>
-                    <input type="checkbox" name="dry_run" value="on" id="dry_run" {{if .Settings.DryRun}}checked{{end}}>
-                    Dry Run
+                    <input type="checkbox" name="dry_run" value="on" id="dry_run" {{if .Settings.DryRun}}checked{{end}} title="When enabled, sync and archive jobs run without making changes">
+                    Dry run — simulate without changes
                 </label>
             </div>
             <div class="form-group">
-                <label for="auto_archive_days">Auto-archive Days</label>
-                <input type="number" id="auto_archive_days" name="auto_archive_days" value="{{.Settings.AutoArchiveDays}}">
+                <label for="auto_archive_days">Auto-archive after N days of inactivity</label>
+                <input type="number" id="auto_archive_days" name="auto_archive_days" value="{{.Settings.AutoArchiveDays}}" title="Number of days without activity before GitHub repositories are auto-archived (0 to disable)">
             </div>
             <div class="form-group">
-                <label for="log_retention_days">Log Retention Days</label>
-                <input type="number" id="log_retention_days" name="log_retention_days" value="{{.Settings.LogRetentionDays}}">
+                <label for="log_retention_days">Keep logs for N days</label>
+                <input type="number" id="log_retention_days" name="log_retention_days" value="{{.Settings.LogRetentionDays}}" title="Number of days to keep log entries before they are deleted">
             </div>
-            <button type="submit">Save Settings</button>
+            <button type="submit" title="Save general settings">Save Settings</button>
         </form>
     </article>
 
@@ -39,9 +39,9 @@
             <input type="hidden" name="csrf" value="{{.CSRFToken}}">
             <div class="form-group">
                 <label for="token">New Token</label>
-                <input type="password" id="token" name="token">
+                <input type="password" id="token" name="token" title="GitHub personal access token used to list and archive repositories">
             </div>
-            <button type="submit">Save Token</button>
+            <button type="submit" title="Save GitHub personal access token">Save Token</button>
         </form>
     </article>
 </section>

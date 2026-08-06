@@ -19,7 +19,7 @@
         <a href="/settings" {{if eq .CurrentPath "/settings"}}class="active"{{end}}>Settings</a>
         <form method="POST" action="/logout">
             <input type="hidden" name="csrf" value="{{.CSRFToken}}">
-            <button type="submit">Logout</button>
+            <button type="submit" title="Log out of gh-vault">Logout</button>
         </form>
     </nav>
     {{end}}
