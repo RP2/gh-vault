@@ -52,6 +52,16 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
+// Confirmation for native (non-htmx) form submissions with data-confirm
+document.addEventListener('submit', function(e) {
+    var form = e.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    var msg = form.getAttribute('data-confirm');
+    if (msg && !confirm(msg)) {
+        e.preventDefault();
+    }
+});
+
 // Select-all checkbox
 document.addEventListener('DOMContentLoaded', function() {
     function syncSelectAll(checked) {

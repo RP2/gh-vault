@@ -17,7 +17,7 @@
         <a href="/repos" {{if eq .CurrentPath "/repos"}}class="active"{{end}}>Repos</a>
         <a href="/logs" {{if eq .CurrentPath "/logs"}}class="active"{{end}}>Logs</a>
         <a href="/settings" {{if eq .CurrentPath "/settings"}}class="active"{{end}}>Settings</a>
-        <form method="POST" action="/logout">
+        <form method="POST" action="/logout" data-confirm="Sign out of gh-vault?">
             <input type="hidden" name="csrf" value="{{.CSRFToken}}">
             <button type="submit" title="Log out of gh-vault">Logout</button>
         </form>

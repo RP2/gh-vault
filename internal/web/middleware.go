@@ -53,6 +53,18 @@ func (s *Server) stateMachine(next http.Handler) http.Handler {
 	})
 }
 
+// noCacheMiddleware sets headers that prevent browsers from caching responses.
+// Auth-protected pages must not be served from cache after logout, since the
+// back/forward buttons would otherwise display authenticated content to a
+// signed-out user.
+func noCacheMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+		w.Header().Set("Pragma", "no-cache")
+		next.ServeHTTP(w, r)
+	})
+}
+
 // sessionMiddleware reads cookie, loads session, injects into context
 func (s *Server) sessionMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

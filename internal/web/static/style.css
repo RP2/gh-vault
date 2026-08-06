@@ -49,7 +49,15 @@
 }
 
 body {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
   font-size: 1rem;
   line-height: 1.6;
   color: var(--fg);
@@ -395,12 +403,19 @@ details.dropdown > .menu a:hover {
 }
 
 .repos-header {
+  margin-bottom: 1rem;
+}
+
+.repos-header > .row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  flex-wrap: wrap;
   gap: 1rem;
-  margin-bottom: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.repos-header > .row > .row {
+  gap: 0.5rem;
 }
 
 .row {

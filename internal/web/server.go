@@ -109,6 +109,7 @@ func (s *Server) setupRouter() *chi.Mux {
 	r.Use(loggingMiddleware)
 	r.Use(securityHeaders)
 	r.Use(s.sessionMiddleware)
+	r.Use(noCacheMiddleware)
 	r.Use(s.stateMachine)
 	r.Use(s.csrfMiddleware)
 
