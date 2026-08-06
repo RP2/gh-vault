@@ -171,6 +171,7 @@ func (s *SyncerImpl) SyncRepos(ctx context.Context) (SyncResult, error) {
 				metadata.language,
 				metadata.url,
 				metadata.archived,
+				metadata.private,
 				metadata.lastPush,
 			); err != nil {
 				logger.Error("sync: set github metadata", "error", err)
@@ -260,6 +261,9 @@ func metadataChanged(stored model.Repo, metadata repoMetadata) bool {
 		return true
 	}
 	if stored.GitHubArchived != metadata.archived {
+		return true
+	}
+	if stored.Private != metadata.private {
 		return true
 	}
 	if !ptrStringEqual(stored.Language, metadata.language) {

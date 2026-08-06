@@ -20,7 +20,7 @@ type RepoStore interface {
 	GetByOwnerName(owner, name string) (model.Repo, error)
 	Upsert(r model.Repo) (int64, error)
 	SetLastBackup(id int64, at *time.Time) error
-	SetGitHubMetadata(id int64, sizeKB int64, language, url *string, archived bool, lastPush *time.Time) error
+	SetGitHubMetadata(id int64, sizeKB int64, language, url *string, archived bool, private bool, lastPush *time.Time) error
 	SetOwnerName(id int64, owner, name, url string) error
 	SetBackupPath(id int64, path string) error
 	MarkDeleted(id int64) error
@@ -47,7 +47,8 @@ ON CONFLICT(github_id) DO UPDATE SET
 	language = excluded.language,
 	size_kb = excluded.size_kb,
 	last_push = excluded.last_push,
-	github_archived = excluded.github_archived
+	github_archived = excluded.github_archived,
+	private = excluded.private
 RETURNING id`
 
 type rowScanner interface {
@@ -257,13 +258,14 @@ func (s *reposStore) SetLastBackup(id int64, at *time.Time) error {
 	return nil
 }
 
-func (s *reposStore) SetGitHubMetadata(id int64, sizeKB int64, language, url *string, archived bool, lastPush *time.Time) error {
+func (s *reposStore) SetGitHubMetadata(id int64, sizeKB int64, language, url *string, archived bool, private bool, lastPush *time.Time) error {
 	result, err := s.db.Exec(
-		"UPDATE repos SET size_kb = ?, language = ?, github_url = ?, github_archived = ?, last_push = ? WHERE id = ?",
+		"UPDATE repos SET size_kb = ?, language = ?, github_url = ?, github_archived = ?, private = ?, last_push = ? WHERE id = ?",
 		sizeKB,
 		nullStringValue(language),
 		nullStringValue(url),
 		archived,
+		private,
 		nullTimeValue(lastPush),
 		id,
 	)

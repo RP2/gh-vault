@@ -1,17 +1,17 @@
 {{define "content"}}
 <section>
   <div class="repos-header">
-    <div class="row">
-      <label><input type="checkbox" id="select-all" title="Select all"> All</label>
-      <button id="btn-set-clone" disabled title="Set selected repos to clone format">Set to clone</button>
-      <button id="btn-set-bundle" disabled title="Set selected repos to bundle format">Set to bundle</button>
-      <button id="btn-enable-backup" disabled title="Include selected repos in backups">Enable</button>
-      <button id="btn-disable-backup" disabled title="Exclude selected repos from backups">Disable</button>
-    </div>
-    <div class="row">
-      <input type="search" name="q" placeholder="Filter repos...">
+    <div class="row" style="justify-content: space-between">
+      <div class="row">
+        <label><input type="checkbox" id="select-all" title="Select all"> All</label>
+        <button id="btn-set-clone" disabled title="Set selected repos to clone format">Set to clone</button>
+        <button id="btn-set-bundle" disabled title="Set selected repos to bundle format">Set to bundle</button>
+        <button id="btn-enable-backup" disabled title="Include selected repos in backups">Enable</button>
+        <button id="btn-disable-backup" disabled title="Exclude selected repos from backups">Disable</button>
+      </div>
       <button hx-post="/sync" hx-target="#repos-table-body" title="Fetch latest repository list from GitHub">Refresh from GitHub</button>
     </div>
+    <input type="search" name="q" placeholder="Filter repos...">
   </div>
 
   <div class="table-scroll">

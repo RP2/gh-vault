@@ -38,7 +38,7 @@ func TestTemplatesRender(t *testing.T) {
 			{ID: 2, Owner: "RP2", Name: "old-repo", Format: model.FormatClone, GitHubDeleted: true},
 		}, DeletedCount: 1, CurrentPath: "/repos"},
 		"logs.html": struct {
-			Logs        []model.LogEntry
+			Logs        []logView
 			Page        int
 			Size        int
 			PrevPage    int
@@ -46,8 +46,8 @@ func TestTemplatesRender(t *testing.T) {
 			HasNext     bool
 			CSRFToken   string
 			CurrentPath string
-		}{Logs: []model.LogEntry{
-			{ID: 1, RepoID: 1, Action: "backup", Status: "success", Message: "ok", CreatedAt: time.Now()},
+		}{Logs: []logView{
+			{LogEntry: model.LogEntry{ID: 1, RepoID: 1, Action: "backup", Status: "success", Message: "ok", CreatedAt: time.Now()}, RepoOwner: "RP2", RepoName: "gh-vault"},
 		}, Page: 1, Size: 50, PrevPage: 0, NextPage: 2, HasNext: true, CSRFToken: "abc", CurrentPath: "/logs"},
 		"settings.html": struct {
 			Settings    model.Settings
