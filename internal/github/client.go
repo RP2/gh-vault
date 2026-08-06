@@ -46,12 +46,41 @@ func (c *GhClient) ListAccessibleRepos(ctx context.Context) ([]*gh.Repository, e
 		return nil, err
 	}
 
+	slog.Info("github: listing repos", "visibility", "all")
+
 	// Classic PATs and fine-grained tokens both work with the unfiltered
-	// endpoint. The token's permissions determine which repos are returned.
+	// endpoint, but fine-grained tokens may default to public repos unless
+	// visibility is explicitly set to "all".
 	opts := &gh.RepositoryListByAuthenticatedUserOptions{
 		ListOptions: gh.ListOptions{PerPage: 100},
+		Visibility:  "all",
 	}
 
+	accessible, err := c.listReposWithOpts(ctx, client, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Fallback: some fine-grained tokens may need affiliation=owner to
+	// return any repositories. Only retry if the first attempt was empty.
+	if len(accessible) == 0 {
+		slog.Debug("github: first list returned 0 repos, retrying with affiliation=owner")
+		opts = &gh.RepositoryListByAuthenticatedUserOptions{
+			ListOptions: gh.ListOptions{PerPage: 100},
+			Visibility:  "all",
+			Affiliation: "owner",
+		}
+		accessible, err = c.listReposWithOpts(ctx, client, opts)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	slog.Info("github: listed repos", "total", len(accessible))
+	return accessible, nil
+}
+
+func (c *GhClient) listReposWithOpts(ctx context.Context, client *gh.Client, opts *gh.RepositoryListByAuthenticatedUserOptions) ([]*gh.Repository, error) {
 	var accessible []*gh.Repository
 	for {
 		if ctx.Err() != nil {
@@ -63,6 +92,12 @@ func (c *GhClient) ListAccessibleRepos(ctx context.Context) ([]*gh.Repository, e
 		}
 		slog.Debug("github: page", "repos_on_page", len(repos), "page", opts.Page)
 		for _, r := range repos {
+			slog.Debug("github: repo",
+				"id", r.GetID(),
+				"name", r.GetOwner().GetLogin()+"/"+r.GetName(),
+				"private", r.GetPrivate(),
+				"archived", r.GetArchived(),
+			)
 			if r.GetFork() {
 				continue
 			}
@@ -73,7 +108,6 @@ func (c *GhClient) ListAccessibleRepos(ctx context.Context) ([]*gh.Repository, e
 		}
 		opts.Page = resp.NextPage
 	}
-	slog.Info("github: listed repos", "total", len(accessible))
 	return accessible, nil
 }
 

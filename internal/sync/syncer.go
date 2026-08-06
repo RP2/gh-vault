@@ -62,6 +62,11 @@ func (s *SyncerImpl) SyncRepos(ctx context.Context) (SyncResult, error) {
 		return result, fmt.Errorf("sync: list stored repos: %w", err)
 	}
 
+	if len(ghRepos) == 0 && len(storedRepos) > 0 {
+		slog.Warn("sync: API returned 0 repos but store has repos — token may lack permissions",
+			"store_repos", len(storedRepos))
+	}
+
 	slog.Info("sync: starting", "api_repos", len(ghRepos), "store_repos", len(storedRepos))
 
 	ghMap := make(map[int64]*gh.Repository, len(ghRepos))
