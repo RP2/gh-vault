@@ -47,7 +47,8 @@ ON CONFLICT(github_id) DO UPDATE SET
 	size_kb = excluded.size_kb,
 	last_push = excluded.last_push,
 	github_archived = excluded.github_archived,
-	private = excluded.private
+	private = excluded.private,
+	backup_enabled = excluded.backup_enabled
 RETURNING id`
 
 type rowScanner interface {
