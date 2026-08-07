@@ -19,6 +19,7 @@ import (
 
 	"github.com/RP2/gh-vault/internal/model"
 	"github.com/RP2/gh-vault/internal/store"
+	syncpkg "github.com/RP2/gh-vault/internal/sync"
 )
 
 // rate limit cache for token status endpoint
@@ -299,14 +300,12 @@ func (s *Server) handleReposList(w http.ResponseWriter, r *http.Request) {
 		Repos        []model.Repo
 		DeletedRepos []model.Repo
 		DeletedCount int
-		SyncError    string
 		CurrentPath  string
 	}{
 		CSRFToken:    s.csrfToken(r),
 		Repos:        active,
 		DeletedRepos: deleted,
 		DeletedCount: len(deleted),
-		SyncError:    r.URL.Query().Get("sync_error"),
 		CurrentPath:  r.URL.Path,
 	}
 	s.renderTemplate(w, "repos", data)
@@ -350,19 +349,44 @@ func (s *Server) handleRepoBackupToggle(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleBulkSetFormat(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	ids := r.FormValue("ids")
+	idsStr := strings.Trim(r.FormValue("ids"), ",")
 	format := r.FormValue("format") // "clone" or "bundle"
-	if ids == "" || (format != "clone" && format != "bundle") {
+	if format != "clone" && format != "bundle" {
+		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	for _, idStr := range strings.Split(ids, ",") {
+	ids := strings.Split(idsStr, ",")
+	if len(ids) > 200 {
+		http.Error(w, "too many selections (max 200)", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(ids[0]) == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	seen := make(map[int64]struct{}, len(ids))
+	for _, idStr := range ids {
 		id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
 		if err != nil {
 			continue
 		}
-		if err := s.repos.SetFormat(id, model.RepoFormat(format), ""); err != nil {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		repo, err := s.repos.Get(id)
+		if err != nil {
+			slog.Error("bulk set format: lookup", "id", id, "error", err)
+			continue
+		}
+		if repo.GitHubDeleted {
+			continue
+		}
+		seen[id] = struct{}{}
+		backupPath := syncpkg.PathForFormat(model.RepoFormat(format), repo.Owner, repo.Name)
+		if err := s.repos.SetFormat(id, model.RepoFormat(format), backupPath); err != nil {
 			slog.Error("bulk set format", "id", id, "error", err)
 		}
 	}
@@ -371,18 +395,38 @@ func (s *Server) handleBulkSetFormat(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBulkSetBackup(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	ids := r.FormValue("ids")
+	idsStr := strings.Trim(r.FormValue("ids"), ",")
+	ids := strings.Split(idsStr, ",")
 	enabled := r.FormValue("backup_enabled") == "on"
-	if ids == "" {
+	if len(ids) > 200 {
+		http.Error(w, "too many selections (max 200)", http.StatusBadRequest)
 		return
 	}
-	for _, idStr := range strings.Split(ids, ",") {
+	if strings.TrimSpace(ids[0]) == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	seen := make(map[int64]struct{}, len(ids))
+	for _, idStr := range ids {
 		id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
 		if err != nil {
 			continue
 		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		repo, err := s.repos.Get(id)
+		if err != nil {
+			slog.Error("lookup repo", "id", id, "error", err)
+			continue
+		}
+		if repo.GitHubDeleted {
+			continue
+		}
+		seen[id] = struct{}{}
 		if err := s.repos.SetBackupEnabled(id, enabled); err != nil {
 			slog.Error("bulk set backup", "id", id, "error", err)
 		}
@@ -392,23 +436,31 @@ func (s *Server) handleBulkSetBackup(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBackupChecked(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	ids := strings.Split(r.FormValue("ids"), ",")
+	idsStr := strings.Trim(r.FormValue("ids"), ",")
+	ids := strings.Split(idsStr, ",")
 	if len(ids) > 200 {
 		http.Error(w, "too many selections (max 200)", http.StatusBadRequest)
 		return
 	}
-	if ids[0] == "" {
+	if strings.TrimSpace(ids[0]) == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	seen := make(map[int64]struct{}, len(ids))
 	for _, idStr := range ids {
-		id, err := strconv.ParseInt(idStr, 10, 64)
+		id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
 		if err != nil {
+			continue
+		}
+		if _, dup := seen[id]; dup {
 			continue
 		}
 		repo, err := s.repos.Get(id)
 		if err != nil {
+			slog.Error("lookup repo", "id", id, "error", err)
 			continue
 		}
 		if repo.GitHubDeleted {
@@ -417,13 +469,14 @@ func (s *Server) handleBackupChecked(w http.ResponseWriter, r *http.Request) {
 		if !repo.BackupEnabled {
 			continue
 		}
+		seen[id] = struct{}{}
 		go func(repoID int64) {
 			ctx, cancel := background()
 			defer cancel()
 
 			// Re-read the repo from the DB so we act on fresh state.
 			r, err := s.repos.Get(repoID)
-			if err != nil || r.GitHubDeleted {
+			if err != nil || r.GitHubDeleted || !r.BackupEnabled {
 				return
 			}
 
@@ -650,13 +703,7 @@ func (s *Server) handleSettingsPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cron := r.FormValue("cron_schedule")
-	dryRun := r.FormValue("dry_run")
 	logRetentionDays := r.FormValue("log_retention_days")
-
-	dryRunStr := "false"
-	if dryRun == "on" || dryRun == "true" {
-		dryRunStr = "true"
-	}
 
 	currentSettings, err := s.settings.GetAll()
 	if err != nil {
@@ -667,11 +714,6 @@ func (s *Server) handleSettingsPost(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.settings.Set("cron_schedule", cron); err != nil {
 		slog.Error("set cron_schedule", "error", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	if err := s.settings.Set("dry_run", dryRunStr); err != nil {
-		slog.Error("set dry_run", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}

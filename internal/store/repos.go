@@ -28,17 +28,16 @@ type RepoStore interface {
 	Delete(id int64) error
 	SetFormat(id int64, f model.RepoFormat, path string) error
 	SetVerified(id int64, at *time.Time) error
-	SetAutoArchive(id int64, enabled bool) error
 	SetBackupEnabled(id int64, enabled bool) error
 }
 
 var _ RepoStore = (*reposStore)(nil)
 
-const repoColumns = "id, github_id, owner, name, format, backup_path, github_url, language, size_kb, last_push, last_backup, verified_at, github_archived, github_deleted, private, auto_archive, backup_enabled, created_at, updated_at"
+const repoColumns = "id, github_id, owner, name, format, backup_path, github_url, language, size_kb, last_push, last_backup, verified_at, github_archived, github_deleted, private, backup_enabled, created_at, updated_at"
 
 const repoUpsertSQL = `INSERT INTO repos (
-	github_id, owner, name, format, backup_path, github_url, language, size_kb, last_push, github_archived, private, auto_archive, backup_enabled
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	github_id, owner, name, format, backup_path, github_url, language, size_kb, last_push, github_archived, private, backup_enabled
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(github_id) DO UPDATE SET
 	owner = excluded.owner,
 	name = excluded.name,
@@ -70,7 +69,7 @@ func scanRepo(s rowScanner) (model.Repo, error) {
 		&r.ID, &r.GitHubID, &r.Owner, &r.Name, &format,
 		&backup, &ghURL, &language, &r.SizeKB,
 		&lastPush, &lastBk, &verified,
-		&r.GitHubArchived, &r.GitHubDeleted, &r.Private, &r.AutoArchive, &r.BackupEnabled,
+		&r.GitHubArchived, &r.GitHubDeleted, &r.Private, &r.BackupEnabled,
 		&r.CreatedAt, &r.UpdatedAt,
 	); err != nil {
 		return model.Repo{}, err
@@ -237,7 +236,6 @@ func (s *reposStore) Upsert(r model.Repo) (int64, error) {
 		nullTimeValue(r.LastPush),
 		r.GitHubArchived,
 		r.Private,
-		r.AutoArchive,
 		r.BackupEnabled,
 	).Scan(&id)
 	if err != nil {
@@ -364,21 +362,6 @@ func (s *reposStore) SetVerified(id int64, at *time.Time) error {
 	)
 	if err != nil {
 		return fmt.Errorf("store: set verified_at for %d: %w", id, err)
-	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
-func (s *reposStore) SetAutoArchive(id int64, enabled bool) error {
-	result, err := s.db.Exec(
-		"UPDATE repos SET auto_archive = ? WHERE id = ?",
-		enabled, id,
-	)
-	if err != nil {
-		return fmt.Errorf("store: set auto_archive for %d: %w", id, err)
 	}
 	n, _ := result.RowsAffected()
 	if n == 0 {

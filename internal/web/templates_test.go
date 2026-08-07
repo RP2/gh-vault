@@ -33,7 +33,7 @@ func TestTemplatesRender(t *testing.T) {
 			DeletedCount int
 			CurrentPath  string
 		}{CSRFToken: "abc", Repos: []model.Repo{
-			{ID: 1, Owner: "RP2", Name: "gh-vault", Format: model.FormatClone, AutoArchive: true},
+			{ID: 1, Owner: "RP2", Name: "gh-vault", Format: model.FormatClone},
 		}, DeletedRepos: []model.Repo{
 			{ID: 2, Owner: "RP2", Name: "old-repo", Format: model.FormatClone, GitHubDeleted: true},
 		}, DeletedCount: 1, CurrentPath: "/repos"},
@@ -54,7 +54,7 @@ func TestTemplatesRender(t *testing.T) {
 			Reason      string
 			CSRFToken   string
 			CurrentPath string
-		}{Settings: model.Settings{CronSchedule: "0 0 * * *", DryRun: true, AutoArchiveDays: 30, LogRetentionDays: 90}, Reason: "token_missing", CSRFToken: "abc", CurrentPath: "/settings"},
+		}{Settings: model.Settings{CronSchedule: "0 0 * * *", LogRetentionDays: 90}, Reason: "token_missing", CSRFToken: "abc", CurrentPath: "/settings"},
 		"setup.html": map[string]string{"Error": "bad", "CSRFToken": "abc", "CurrentPath": "/setup"},
 		"login.html": map[string]string{"Error": "invalid", "CSRFToken": "abc", "CurrentPath": "/login"},
 	}

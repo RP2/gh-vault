@@ -39,10 +39,10 @@ func Load() *Config {
 		BaseURL:   "http://localhost:8090",
 	}
 
-	if v := os.Getenv("GHVAULT_PORT"); v != "" {
+	if v := os.Getenv("PORT"); v != "" {
 		p, err := strconv.Atoi(v)
 		if err != nil {
-			slog.Error("invalid GHVAULT_PORT", "value", v, "error", err)
+			slog.Error("invalid PORT", "value", v, "error", err)
 			os.Exit(1)
 		}
 		if p < 1 || p > 65535 {
@@ -52,15 +52,15 @@ func Load() *Config {
 		c.Port = p
 	}
 
-	if v := os.Getenv("GHVAULT_BACKUP_DIR"); v != "" {
+	if v := os.Getenv("BACKUP_DIR"); v != "" {
 		c.BackupDir = v
 	}
 
-	if v := os.Getenv("GHVAULT_DATA_DIR"); v != "" {
+	if v := os.Getenv("DATA_DIR"); v != "" {
 		c.DataDir = v
 	}
 
-	if v := os.Getenv("GHVAULT_BASE_URL"); v != "" {
+	if v := os.Getenv("BASE_URL"); v != "" {
 		c.BaseURL = v
 	}
 
@@ -70,7 +70,7 @@ func Load() *Config {
 }
 
 func loadEncryptionKey(dataDir string) []byte {
-	raw := strings.TrimSpace(os.Getenv("GHVAULT_ENCRYPTION_KEY"))
+	raw := strings.TrimSpace(os.Getenv("ENCRYPTION_KEY"))
 
 	if raw == "" {
 		data, err := os.ReadFile("/run/secrets/encryption_key")
@@ -130,12 +130,12 @@ func loadEncryptionKey(dataDir string) []byte {
 
 	decoded, err := base64.StdEncoding.DecodeString(raw)
 	if err != nil {
-		slog.Error("failed to base64-decode GHVAULT_ENCRYPTION_KEY", "error", err)
+		slog.Error("failed to base64-decode ENCRYPTION_KEY", "error", err)
 		os.Exit(1)
 	}
 
 	if len(decoded) != 32 {
-		slog.Error("GHVAULT_ENCRYPTION_KEY must be 32 bytes after decoding", "got", len(decoded))
+		slog.Error("ENCRYPTION_KEY must be 32 bytes after decoding", "got", len(decoded))
 		os.Exit(1)
 	}
 

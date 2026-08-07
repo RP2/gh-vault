@@ -119,7 +119,7 @@ func (s *SyncerImpl) SyncRepos(ctx context.Context) (SyncResult, error) {
 		}
 
 		newURL := fmt.Sprintf("https://github.com/%s/%s", owner, name)
-		newBackupPath := pathForFormat(stored.Format, owner, name)
+		newBackupPath := PathForFormat(stored.Format, owner, name)
 		metadata := repoMetadataFromGitHub(ghRepo, newURL)
 
 		ownerChanged := stored.Owner != owner
@@ -275,14 +275,14 @@ func metadataChanged(stored model.Repo, metadata repoMetadata) bool {
 	if !ptrTimeEqual(stored.LastPush, metadata.lastPush) {
 		return true
 	}
-	expectedBackupPath := pathForFormat(stored.Format, stored.Owner, stored.Name)
+	expectedBackupPath := PathForFormat(stored.Format, stored.Owner, stored.Name)
 	if stored.BackupPath == nil || *stored.BackupPath != expectedBackupPath {
 		return true
 	}
 	return false
 }
 
-func pathForFormat(f model.RepoFormat, owner, name string) string {
+func PathForFormat(f model.RepoFormat, owner, name string) string {
 	switch f {
 	case model.FormatBundle:
 		return fmt.Sprintf("archived/%s/%s.bundle", owner, name)
@@ -309,7 +309,7 @@ func (s *SyncerImpl) addNewRepo(ghRepo *gh.Repository, result *SyncResult) error
 	owner := ghRepo.GetOwner().GetLogin()
 	name := ghRepo.GetName()
 	url := fmt.Sprintf("https://github.com/%s/%s", owner, name)
-	backupPath := pathForFormat(model.FormatClone, owner, name)
+	backupPath := PathForFormat(model.FormatClone, owner, name)
 	metadata := repoMetadataFromGitHub(ghRepo, url)
 
 	newRepo := model.Repo{
@@ -324,7 +324,6 @@ func (s *SyncerImpl) addNewRepo(ghRepo *gh.Repository, result *SyncResult) error
 		LastPush:       metadata.lastPush,
 		GitHubArchived: metadata.archived,
 		Private:        metadata.private,
-		AutoArchive:    false,
 	}
 
 	id, err := s.repos.Upsert(newRepo)

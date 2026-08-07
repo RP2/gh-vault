@@ -19,6 +19,7 @@ import (
 	"github.com/RP2/gh-vault/internal/github"
 	"github.com/RP2/gh-vault/internal/model"
 	"github.com/RP2/gh-vault/internal/store"
+	syncpkg "github.com/RP2/gh-vault/internal/sync"
 )
 
 // Engine performs backup operations on a repository.
@@ -262,7 +263,7 @@ func (e *BackupEngine) SwitchToBundle(ctx context.Context, repo model.Repo) erro
 	}
 
 	// Step 4: update the stored format and clear verification.
-	newPath := fmt.Sprintf("archived/%s/%s.bundle", owner, name)
+	newPath := syncpkg.PathForFormat(model.FormatBundle, owner, name)
 	if err := e.repos.SetFormat(repo.ID, model.FormatBundle, newPath); err != nil {
 		return fmt.Errorf("backup: switch to bundle %s/%s step 4: %w", owner, name, err)
 	}
@@ -364,7 +365,7 @@ func (e *BackupEngine) SwitchToClone(ctx context.Context, repo model.Repo) error
 	}
 
 	// Step 7: update the stored format and clear verification.
-	newPath := fmt.Sprintf("active/%s/%s.git", owner, name)
+	newPath := syncpkg.PathForFormat(model.FormatClone, owner, name)
 	if err := e.repos.SetFormat(repo.ID, model.FormatClone, newPath); err != nil {
 		return fmt.Errorf("backup: switch to clone %s/%s step 7: %w", owner, name, err)
 	}

@@ -4,21 +4,18 @@ Self-hosted GitHub backup tool. Runs in Docker. Backs up your repositories on a 
 
 ## What It Does
 
-gh-vault clones your GitHub repositories and stores them locally. Active projects get full bare clones. Projects you want to take offline get git bundles. You can archive or delete repos on GitHub from the dashboard.
+gh-vault clones your GitHub repositories and stores them locally. Active projects get full bare clones. Projects you want to take offline get git bundles.
 
 The tool runs on a cron schedule inside a Docker container. It syncs with the GitHub API, backs up changed repos, and logs every action.
 
 ## Features
 
 - **Scheduled backups.** Sync and backup run on cron. Default sync runs monthly. Backup runs daily.
-- **Web dashboard.** View all repos, trigger backups, switch formats, archive or delete. Built with htmx and Tailwind CSS. No JavaScript framework.
-- **Two backup formats.** Bare clones for active repos. Git bundles for archived repos. Switch between them from the dashboard.
-- **GitHub archive and delete.** Archive a repo on GitHub to make it read-only. Delete it when you no longer need it. Both actions require a verified backup.
-- **Auto-archive.** Enable per repo. The tool archives repos on GitHub after a set number of days with no push activity.
-- **Encrypted token storage.** Your GitHub token is stored AES-256-GCM encrypted in SQLite. The encryption key is the only secret you need.
-- **Activity log.** Every backup, archive, delete, and sync action is logged. Logs rotate based on your retention setting.
+- **Web dashboard.** View all repos, trigger backups, switch formats. Built with htmx and Tailwind CSS. No JavaScript framework.
+- **Two backup formats.** Bare clones for active repos. Git bundles for offline storage. Switch between them from the dashboard.
+- **Encrypted token storage.** Your GitHub token is stored AES-256-GCM encrypted in SQLite. The app generates and manages its own encryption key.
+- **Activity log.** Every backup and sync action is logged. Logs rotate based on your retention setting.
 - **Single-user auth.** Session-based login with bcrypt-hashed password. First-run wizard sets up your account.
-- **Dry-run mode.** Test the workflow without making changes on GitHub. Local operations still run.
 
 ## Tech Stack
 
@@ -34,14 +31,7 @@ The tool runs on a cron schedule inside a Docker container. It syncs with the Gi
 
 ## Quick Start
 
-### 1. Generate an encryption key
-
-```bash
-openssl rand -base64 32 > ./encryption_key
-chmod 600 ./encryption_key
-```
-
-### 2. Create a docker-compose.yml
+### 1. Create a docker-compose.yml
 
 ```yaml
 services:
@@ -55,27 +45,21 @@ services:
       - /path/to/config:/config
       - /path/to/backups:/backups
     environment:
-      - GHVAULT_PORT=8090
-    secrets:
-      - encryption_key
+      - PORT=8090
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8090/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
-
-secrets:
-  encryption_key:
-    file: ./encryption_key
 ```
 
-### 3. Start the container
+### 2. Start the container
 
 ```bash
 docker compose up -d
 ```
 
-### 4. Open the dashboard
+### 3. Open the dashboard
 
 Go to `http://localhost:8090`. The first-run wizard asks you to create a username and password. Then it asks for your GitHub token.
 
@@ -83,17 +67,17 @@ Go to `http://localhost:8090`. The first-run wizard asks you to create a usernam
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `GHVAULT_ENCRYPTION_KEY` | Yes | — | 32 bytes, base64. AES-256 key for encrypting the GitHub token. |
-| `GHVAULT_PORT` | No | `8090` | Port the web dashboard listens on. |
-| `GHVAULT_BACKUP_DIR` | No | `/backups` | Container path for git clones and bundles. |
-| `GHVAULT_DATA_DIR` | No | `/config` | Container path for the SQLite database and encrypted secrets. |
-| `GHVAULT_BASE_URL` | No | `http://localhost:8090` | Public URL. If it uses HTTPS, session cookies get the Secure flag. |
+| `ENCRYPTION_KEY` | No | auto-generated | 32 bytes, base64. AES-256 key for encrypting the GitHub token. If not set, the app generates one on first run and saves it to the data directory. |
+| `PORT` | No | `8090` | Port the web dashboard listens on. |
+| `BACKUP_DIR` | No | `/backups` | Container path for git clones and bundles. |
+| `DATA_DIR` | No | `/config` | Container path for the SQLite database and encrypted secrets. |
+| `BASE_URL` | No | `http://localhost:8090` | Public URL. If it uses HTTPS, session cookies get the Secure flag. |
 
 ## Volume Layout
 
 | Container Path | Purpose |
 |---|---|
-| `/config` | SQLite database, encrypted secrets, app state. Small. Churns frequently. |
+| `/config` | SQLite database, encrypted secrets, encryption key, app state. Small. Churns frequently. |
 | `/backups` | Git clones (`active/`), git bundles (`archived/`). Large. Append-mostly. |
 
 Keep these on separate datasets. This lets you snapshot and retain them independently.
@@ -114,15 +98,18 @@ gh-vault stores your GitHub token encrypted in SQLite. You set it through the we
 
 **Token rotation:** Go to Settings and enter a new token. The change takes effect immediately. No container restart needed.
 
-**If you lose the encryption key:** You must re-enter your GitHub token. The encrypted data cannot be recovered without the key.
+**If you lose the encryption key:** You must re-enter your GitHub token. The encrypted data cannot be recovered without the key. The key is stored in the `/config` dataset. Back up this dataset to preserve the key.
 
 ## Scheduler Jobs
+
+Sync calls the GitHub API to reconcile your local repo list. It adds new repos, detects renames and transfers, and marks deleted repos. It does not download git data.
+
+Backup runs `git clone` or `git fetch` to download repository contents. It runs on all repos with backup enabled.
 
 | Job | Schedule | What It Does |
 |---|---|---|
 | sync | Configurable (default: monthly) | Fetches repo list from GitHub. Detects new, renamed, transferred, and deleted repos. |
-| backup | Daily at 02:00 | Backs up all active repos. Up to 3 concurrent. |
-| auto-archive | Daily at 03:00 | Archives repos on GitHub that match your criteria. |
+| backup | Daily at 02:00 | Clones or fetches all repos with backup enabled. Up to 3 concurrent. |
 | verify | Weekly (Sunday 04:00) | Runs `git fsck` on clones and `git bundle verify` on bundles. |
 | log_cleanup | Daily at 05:00 | Deletes logs older than your retention setting. |
 | session_cleanup | Daily at 05:30 | Deletes expired sessions. |
@@ -130,11 +117,10 @@ gh-vault stores your GitHub token encrypted in SQLite. You set it through the we
 ## Restore Procedure
 
 1. Stop the container: `docker compose down`
-2. Restore the `/config` dataset (database and encrypted secrets).
-3. Make sure the encryption key file is in place.
-4. Start the container: `docker compose up -d`
-5. Optionally restore the `/backups` dataset.
-6. Run a sync from the dashboard to reconcile. The syncer detects missing backup paths and re-clones from GitHub.
+2. Restore the `/config` dataset. This includes the database, encrypted secrets, and encryption key.
+3. Start the container: `docker compose up -d`
+4. Optionally restore the `/backups` dataset.
+5. Run a sync from the dashboard to reconcile. The syncer detects missing backup paths and re-clones from GitHub.
 
 ## Building from Source
 

@@ -16,12 +16,6 @@
                 <input type="text" id="cron_schedule" name="cron_schedule" value="{{.Settings.CronSchedule}}" title="Cron expression that controls how often gh-vault syncs with GitHub">
             </div>
             <div class="form-group">
-                <label>
-                    <input type="checkbox" name="dry_run" value="on" id="dry_run" {{if .Settings.DryRun}}checked{{end}} title="When enabled, sync jobs run without making changes">
-                    Dry run — simulate without changes
-                </label>
-            </div>
-            <div class="form-group">
                 <label for="log_retention_days">Keep logs for N days</label>
                 <input type="number" id="log_retention_days" name="log_retention_days" value="{{.Settings.LogRetentionDays}}" title="Number of days to keep log entries before they are deleted">
             </div>

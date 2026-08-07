@@ -39,7 +39,7 @@ type TokenProvider interface {
 //	12-byte random nonce, so the same plaintext encrypted twice
 //	produces unrelated ciphertexts. The 32-byte AES-256 key is
 //	supplied by the caller (typically the base64-decoded value of
-//	the GHVAULT_ENCRYPTION_KEY environment variable).
+//	the ENCRYPTION_KEY environment variable).
 //
 //	cached  = plaintext
 //	stored  = AES-256-GCM-Seal(encKey, nonce, plaintext, nil)

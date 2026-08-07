@@ -19,7 +19,6 @@ type Repo struct {
 	GitHubArchived bool       `db:"github_archived" json:"github_archived"`
 	GitHubDeleted  bool       `db:"github_deleted" json:"github_deleted"`
 	Private        bool       `db:"private" json:"private"`
-	AutoArchive    bool       `db:"auto_archive" json:"auto_archive"`
 	BackupEnabled  bool       `db:"backup_enabled" json:"backup_enabled"`
 	CreatedAt      time.Time  `db:"created_at" json:"created_at"`
 	UpdatedAt      time.Time  `db:"updated_at" json:"updated_at"`
@@ -64,7 +63,5 @@ type User struct {
 // Settings holds application-wide configuration values.
 type Settings struct {
 	CronSchedule     string `db:"cron_schedule" json:"cron_schedule"`
-	DryRun           bool   `db:"dry_run" json:"dry_run"`
-	AutoArchiveDays  int    `db:"auto_archive_days" json:"auto_archive_days"`
 	LogRetentionDays int    `db:"log_retention_days" json:"log_retention_days"`
 }

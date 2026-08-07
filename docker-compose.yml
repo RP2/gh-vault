@@ -4,24 +4,19 @@ services:
     container_name: gh-vault
     restart: unless-stopped
     user: "568:568"  # TrueNAS SCALE apps user
-    env_file: .env
     ports:
       - "8090:8090"
     volumes:
-      - /mnt/pool/gh-vault/config:/config      # TODO: your ZFS dataset for app state
-      - /mnt/pool/gh-vault/backups:/backups     # TODO: your ZFS dataset for repo backups
+      - /mnt/pool/gh-vault/config:/config      # your host path for app state
+      - /mnt/pool/gh-vault/backups:/backups     # your host path for repo backups
     environment:
-      - GHVAULT_PORT=8090
-      - GHVAULT_DATA_DIR=/config
-      - GHVAULT_BACKUP_DIR=/backups
-    secrets:
-      - encryption_key
+      - PORT=8090
+      - DATA_DIR=/config
+      - BACKUP_DIR=/backups
+      # - BASE_URL=http://localhost:8090  # Set to your public URL. Use https:// for secure cookies.
+      # - ENCRYPTION_KEY=                  # 32 bytes base64. Auto-generated if not set.
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8090/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
-
-secrets:
-  encryption_key:
-    file: ./encryption_key  # Generate: openssl rand -base64 32 > ./encryption_key && chmod 600 ./encryption_key
