@@ -1,6 +1,6 @@
 services:
   gh-vault:
-    build: .
+    image: ghcr.io/RP2/gh-vault:main
     container_name: gh-vault
     restart: unless-stopped
     user: "568:568"  # TrueNAS SCALE apps user
