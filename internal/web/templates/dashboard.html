@@ -1,23 +1,25 @@
 {{define "content"}}
-<p>{{.RepoCount}} repositories · {{.BackedUp}} copied to disk · {{.NotBackedUp}} not yet copied</p>
-<p>
-  <button hx-post="/sync" hx-swap="none" title="Fetch latest repository list from GitHub">Refresh from GitHub</button>
-  <button hx-post="/backup-all" hx-swap="none" title="Copy all enabled repositories to disk">Copy all enabled</button>
-</p>
+<section>
+  <p>{{.RepoCount}} repositories · {{.BackedUp}} copied to disk · {{.NotBackedUp}} not yet copied</p>
+  <p>
+    <button hx-post="/sync" hx-disabled-elt="this" title="Fetch latest repository list from GitHub">Refresh from GitHub</button>
+    <button hx-post="/backup-all" title="Copy all enabled repositories to disk">Backup All</button>
+  </p>
 
-{{if .RecentLogs}}
-<h2>Recent Activity</h2>
-<table>
-  <thead><tr><th>When</th><th>Action</th><th>Detail</th></tr></thead>
-  <tbody>
-    {{range .RecentLogs}}
-    <tr>
-      <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
-      <td>{{.Action}}</td>
-      <td>{{.Message}}</td>
-    </tr>
-    {{end}}
-  </tbody>
-</table>
-{{end}}
+  {{if .RecentLogs}}
+  <h2>Recent Activity</h2>
+  <table>
+    <thead><tr><th>When</th><th>Action</th><th>Detail</th></tr></thead>
+    <tbody>
+      {{range .RecentLogs}}
+      <tr>
+        <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+        <td>{{.Action}}</td>
+        <td>{{.Message}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+</section>
 {{end}}

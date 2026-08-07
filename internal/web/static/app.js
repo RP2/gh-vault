@@ -28,28 +28,14 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-// Sync button: replace tbody with "Syncing..." before request
-document.addEventListener('DOMContentLoaded', function() {
-    var syncBtn = document.getElementById('btn-sync');
-    if (!syncBtn) return;
-    syncBtn.addEventListener('htmx:beforeRequest', function() {
-        var tbody = document.getElementById('repos-table-body');
-        if (tbody) {
-            tbody.innerHTML = '<tr><td colspan="4">Syncing...</td></tr>';
-        }
-    });
-});
-
 // Confirmation via data-confirm attribute
-document.addEventListener('DOMContentLoaded', function() {
-    document.addEventListener('htmx:confirm', function(e) {
-        var trigger = e.detail.elt;
-        var confirmEl = trigger.closest('[data-confirm]');
-        if (!confirmEl) return;
-        if (!confirm(confirmEl.dataset.confirm)) {
-            e.preventDefault();
-        }
-    });
+document.addEventListener('htmx:confirm', function(e) {
+    var trigger = e.detail.elt;
+    var confirmEl = trigger.closest('[data-confirm]');
+    if (!confirmEl) return;
+    if (!confirm(confirmEl.dataset.confirm)) {
+        e.preventDefault();
+    }
 });
 
 // Confirmation for native (non-htmx) form submissions with data-confirm
@@ -65,12 +51,12 @@ document.addEventListener('submit', function(e) {
 // Select-all checkbox
 document.addEventListener('DOMContentLoaded', function() {
     function syncSelectAll(checked) {
-        document.querySelectorAll('#select-all, #select-all-header').forEach(function(cb) {
+        document.querySelectorAll('.select-all').forEach(function(cb) {
             cb.checked = checked;
         });
     }
 
-    document.querySelectorAll('#select-all, #select-all-header').forEach(function(selectAll) {
+    document.querySelectorAll('.select-all').forEach(function(selectAll) {
         selectAll.addEventListener('change', function() {
             syncSelectAll(selectAll.checked);
             document.querySelectorAll('.repo-check').forEach(function(cb) {

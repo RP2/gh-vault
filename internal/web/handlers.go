@@ -5,13 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -29,19 +27,7 @@ var (
 	cachedRateLimitAt time.Time
 	rateLimitMu       sync.Mutex
 	rateLimitTTL      = 60 * time.Second
-
-	syncRunning    atomic.Bool
-	lastSyncResult syncResult
-	syncResultMu   sync.Mutex
 )
-
-type syncResult struct {
-	Done    bool
-	Added   int
-	Updated int
-	Deleted int
-	Error   string
-}
 
 // parseRepoID parses the {id} URL parameter as an int64.
 func parseRepoID(r *http.Request) (int64, error) {
@@ -117,6 +103,11 @@ func clearRateLimitCache() {
 // background returns a detached context with a timeout suitable for async work.
 func background() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 30*time.Minute)
+}
+
+// isHtmx reports whether the request was issued by htmx.
+func isHtmx(r *http.Request) bool {
+	return r.Header.Get("HX-Request") == "true"
 }
 
 // Setup Wizard
@@ -308,12 +299,14 @@ func (s *Server) handleReposList(w http.ResponseWriter, r *http.Request) {
 		Repos        []model.Repo
 		DeletedRepos []model.Repo
 		DeletedCount int
+		SyncError    string
 		CurrentPath  string
 	}{
 		CSRFToken:    s.csrfToken(r),
 		Repos:        active,
 		DeletedRepos: deleted,
 		DeletedCount: len(deleted),
+		SyncError:    r.URL.Query().Get("sync_error"),
 		CurrentPath:  r.URL.Path,
 	}
 	s.renderTemplate(w, "repos", data)
@@ -465,91 +458,32 @@ func (s *Server) handleBackupChecked(w http.ResponseWriter, r *http.Request) {
 // Triggers
 
 func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
-	if !syncRunning.CompareAndSwap(false, true) {
-		w.Header().Set("Content-Type", "text/html")
-		if r.Header.Get("HX-Target") == "repos-table-body" {
-			w.Write([]byte(`<tr hx-get="/sync/status" hx-trigger="every 2s" hx-target="#repos-table-body" hx-swap="innerHTML"><td colspan="4"><span>Syncing from GitHub...</span></td></tr>`))
-		} else {
-			w.Write([]byte(`<span class="badge">Sync already running</span>`))
-		}
-		return
-	}
-	syncResultMu.Lock()
-	lastSyncResult = syncResult{}
-	syncResultMu.Unlock()
-
 	go func() {
-		defer syncRunning.Store(false)
+		defer func() {
+			if rec := recover(); rec != nil {
+				slog.Error("panic in sync job", "panic", rec)
+			}
+		}()
 		ctx, cancel := background()
 		defer cancel()
-		result, err := s.syncer.SyncRepos(ctx)
-		syncResultMu.Lock()
-		if err != nil {
-			lastSyncResult = syncResult{Done: true, Error: err.Error()}
-		} else {
-			lastSyncResult = syncResult{Done: true, Added: result.Added, Updated: result.Updated, Deleted: result.Deleted}
+		if _, err := s.syncer.SyncRepos(ctx); err != nil {
+			slog.Error("trigger sync", "error", err)
 		}
-		syncResultMu.Unlock()
 	}()
 
-	w.Header().Set("Content-Type", "text/html")
-	w.WriteHeader(http.StatusAccepted)
-	if r.Header.Get("HX-Target") == "repos-table-body" {
-		fmt.Fprint(w, `<tr hx-get="/sync/status" hx-trigger="every 2s" hx-target="#repos-table-body" hx-swap="innerHTML"><td colspan="4"><span>Syncing from GitHub...</span></td></tr>`)
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", "/repos")
 	} else {
-		fmt.Fprint(w, `<div id="sync-status" hx-get="/sync/status" hx-trigger="every 2s" hx-swap="outerHTML"><span>Syncing from GitHub...</span></div>`)
+		http.Redirect(w, r, "/repos", http.StatusFound)
 	}
-}
-
-func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
-	syncResultMu.Lock()
-	result := lastSyncResult
-	syncResultMu.Unlock()
-
-	w.Header().Set("Content-Type", "text/html")
-
-	isTableBody := r.Header.Get("HX-Target") == "repos-table-body"
-
-	if syncRunning.Load() {
-		if isTableBody {
-			fmt.Fprint(w, `<tr hx-get="/sync/status" hx-trigger="every 2s" hx-target="#repos-table-body" hx-swap="innerHTML"><td colspan="4"><span>Syncing from GitHub...</span></td></tr>`)
-		} else {
-			fmt.Fprint(w, `<div id="sync-status" hx-get="/sync/status" hx-trigger="every 2s" hx-swap="outerHTML"><span>Syncing from GitHub...</span></div>`)
-		}
-		return
-	}
-
-	if !result.Done {
-		if isTableBody {
-			fmt.Fprint(w, `<tr><td colspan="4"></td></tr>`)
-		} else {
-			fmt.Fprint(w, `<div id="sync-status"></div>`)
-		}
-		return
-	}
-
-	if result.Error != "" {
-		if isTableBody {
-			fmt.Fprintf(w, `<tr><td colspan="4"><span class="badge error">Sync failed: %s</span></td></tr>`, template.HTMLEscapeString(result.Error))
-		} else {
-			fmt.Fprintf(w, `<div id="sync-status" class="alert error"><span>Sync failed: %s</span></div>`, template.HTMLEscapeString(result.Error))
-		}
-		return
-	}
-
-	if isTableBody {
-		if err := s.renderReposTbody(w, r); err != nil {
-			slog.Error("render repos tbody", "error", err)
-			fmt.Fprintf(w, `<tr><td colspan="4"><span class="badge error">Sync complete but failed to render: %s</span></td></tr>`, template.HTMLEscapeString(err.Error()))
-		}
-		return
-	}
-
-	fmt.Fprintf(w, `<div id="sync-status"><span>Sync complete: %d added, %d updated, %d removed</span> <a href="/repos">Refresh</a></div>`, result.Added, result.Updated, result.Deleted)
 }
 
 func (s *Server) handleTriggerBackup(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusAccepted)
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", "/")
+	} else {
+		http.Redirect(w, r, "/", http.StatusFound)
+	}
 
 	go func() {
 		defer func() {
@@ -650,6 +584,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	views := make([]logView, 0, len(pageEntries))
 	for _, e := range pageEntries {
 		v := logView{LogEntry: e}
+		v.CreatedAt = e.CreatedAt.Local()
 		if e.RepoID != 0 {
 			repo, err := s.repos.Get(e.RepoID)
 			if err == nil {

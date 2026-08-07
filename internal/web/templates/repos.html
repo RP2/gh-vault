@@ -1,15 +1,19 @@
 {{define "content"}}
 <section>
+  {{if eq .SyncError "1"}}
+  <div class="alert error" role="alert"><span>Sync failed. Check logs for details.</span></div>
+  {{end}}
+
   <div class="repos-header">
     <div class="row" style="justify-content: space-between">
       <div class="row">
-        <label><input type="checkbox" id="select-all" title="Select all"> All</label>
+        <label><input type="checkbox" class="select-all" title="Select all"> All</label>
         <button id="btn-set-clone" disabled title="Set selected repos to clone format">Set to clone</button>
         <button id="btn-set-bundle" disabled title="Set selected repos to bundle format">Set to bundle</button>
         <button id="btn-enable-backup" disabled title="Include selected repos in backups">Enable</button>
         <button id="btn-disable-backup" disabled title="Exclude selected repos from backups">Disable</button>
       </div>
-      <button hx-post="/sync" hx-target="#repos-table-body" title="Fetch latest repository list from GitHub">Refresh from GitHub</button>
+      <button id="btn-sync" hx-post="/sync" hx-target="#repos-table-body" hx-disabled-elt="this" title="Fetch latest repository list from GitHub">Refresh from GitHub</button>
     </div>
     <input type="search" name="q" placeholder="Filter repos...">
   </div>
@@ -20,7 +24,7 @@
     <table>
       <thead>
         <tr>
-          <th><input type="checkbox" id="select-all" title="Select all"></th>
+          <th><input type="checkbox" id="select-all" class="select-all" title="Select all"></th>
           <th>Repository</th>
           <th>Last Backup</th>
           <th>Status</th>
@@ -31,7 +35,7 @@
       </tbody>
     </table>
     {{else}}
-    <p>No repositories. <button hx-post="/sync" hx-target="#repos-table-body">Refresh from GitHub</button> to get started.</p>
+    <p>No repositories. <button id="btn-sync" hx-post="/sync" hx-target="#repos-table-body" hx-disabled-elt="this">Refresh from GitHub</button> to get started.</p>
     {{end}}
     </div>
   </div>

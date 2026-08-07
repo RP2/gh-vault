@@ -140,7 +140,6 @@ func (s *Server) setupRouter() *chi.Mux {
 
 	// Triggers
 	r.Post("/sync", s.handleTriggerSync)
-	r.Get("/sync/status", s.handleSyncStatus)
 	r.Post("/backup-all", s.handleTriggerBackup)
 
 	// Logs
