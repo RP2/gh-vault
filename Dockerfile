@@ -5,7 +5,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /gh-vault .
 
-FROM alpine:3.21.4@sha256:46fac42d1232a09876243d83e0f67c3b4d5e0b73b0b782a50e7c53e3f03b473a
+FROM alpine:3.21.4@sha256:b6a6be0ff92ab6db8acd94f5d1b7a6c2f0f5d10ce3c24af348d333ac6da80685
 RUN apk add --no-cache git ca-certificates
 COPY --from=build /gh-vault /usr/local/bin/gh-vault
 # Run as non-root user.
