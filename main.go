@@ -41,6 +41,7 @@ func main() {
 		db.Close()
 		os.Exit(1)
 	}
+	defer srv.Stop()
 
 	if err := sched.Start(); err != nil {
 		slog.Error("failed to start scheduler", "error", err)

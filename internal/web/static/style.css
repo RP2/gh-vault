@@ -432,6 +432,10 @@ section {
   gap: 0.5rem;
 }
 
+.repos-actions {
+  justify-content: space-between;
+}
+
 .row {
   display: flex;
   align-items: center;

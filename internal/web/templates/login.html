@@ -4,7 +4,11 @@
         <h1>Sign in</h1>
         {{if .Error}}
         <div class="alert" role="alert">
+            {{if eq .Error "locked"}}
+            Too many attempts. Try again in 15 minutes.
+            {{else}}
             {{.Error}}
+            {{end}}
         </div>
         {{end}}
         <form method="POST" action="/login">

@@ -3,12 +3,20 @@ services:
     image: ghcr.io/RP2/gh-vault:main
     container_name: gh-vault
     restart: unless-stopped
-    user: "568:568"  # TrueNAS SCALE apps user
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    user: "568:568"  # chown host volumes to this UID:GID
     ports:
       - "8090:8090"
     volumes:
-      - /mnt/pool/gh-vault/config:/config      # your host path for app state
-      - /mnt/pool/gh-vault/backups:/backups     # your host path for repo backups
+      - /path/to/config:/config      # your host path for app state
+      - /path/to/backups:/backups     # your host path for repo backups
+    tmpfs:
+      - /tmp:size=100m,noexec,nosuid
+      - /run:size=10m,noexec,nosuid
     environment:
       - PORT=8090
       - DATA_DIR=/config

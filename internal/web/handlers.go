@@ -121,6 +121,11 @@ func (s *Server) handleSetupGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.allow(clientIP(r.RemoteAddr)) {
+		http.Error(w, "Too many attempts", http.StatusTooManyRequests)
+		return
+	}
+
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
@@ -168,6 +173,7 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.setupDone = true
+	s.rateLimiter.reset(clientIP(r.RemoteAddr))
 
 	if err := s.createSession(w, userID); err != nil {
 		slog.Error("create session", "error", err)
@@ -189,6 +195,12 @@ func (s *Server) handleLoginGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r.RemoteAddr)
+	if !s.rateLimiter.allow(ip) {
+		http.Redirect(w, r, "/login?error=locked", http.StatusFound)
+		return
+	}
+
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
@@ -215,6 +227,8 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=invalid", http.StatusFound)
 		return
 	}
+
+	s.rateLimiter.reset(ip)
 
 	if err := s.createSession(w, user.ID); err != nil {
 		slog.Error("create session", "error", err)

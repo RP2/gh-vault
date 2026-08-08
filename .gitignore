@@ -27,6 +27,8 @@ coverage.html
 .env.production
 *.pem
 *.key
+*.crt
+*.p12
 
 # Vendored AI instruction files (agent prompt injection risk)
 vendor/**/CLAUDE.md

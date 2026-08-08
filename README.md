@@ -1,21 +1,21 @@
 # gh-vault
 
-Self-hosted GitHub backup tool. Runs in Docker. Backs up your repositories on a schedule. Gives you a web dashboard to manage them.
+Self-hosted GitHub backup tool. Runs in Docker. Saves your repos on a schedule. Includes a web dashboard to manage repos.
 
 ## What It Does
 
-gh-vault clones your GitHub repositories and stores them locally. Active projects get full bare clones. Projects you want to take offline get git bundles.
+gh-vault clones your GitHub repos and stores them locally. Active repos get full bare clones. Archived repos get git bundles.
 
-The tool runs on a cron schedule inside a Docker container. It syncs with the GitHub API, backs up changed repos, and logs every action.
+gh-vault runs on a cron schedule inside a Docker container. It syncs with the GitHub API, saves changed repos, and logs every action.
 
 ## Features
 
 - **Scheduled backups.** Sync and backup run on cron. Default sync runs monthly. Backup runs daily.
-- **Web dashboard.** View all repos, trigger backups, switch formats. Built with htmx and Tailwind CSS. No JavaScript framework.
+- **Web dashboard.** View all repos, trigger backups, switch formats. Uses htmx. No JavaScript framework.
 - **Two backup formats.** Bare clones for active repos. Git bundles for offline storage. Switch between them from the dashboard.
-- **Encrypted token storage.** Your GitHub token is stored AES-256-GCM encrypted in SQLite. The app generates and manages its own encryption key.
-- **Activity log.** Every backup and sync action is logged. Logs rotate based on your retention setting.
-- **Single-user auth.** Session-based login with bcrypt-hashed password. First-run wizard sets up your account.
+- **Encrypted token storage.** gh-vault encrypts your GitHub token with AES-256-GCM in SQLite. gh-vault generates and manages its own encryption key.
+- **Activity log.** gh-vault logs every backup and sync action. Logs rotate based on your retention setting.
+- **Single-user auth.** Session-based login with bcrypt-hashed password. First-run wizard creates your account.
 
 ## Tech Stack
 
@@ -25,7 +25,7 @@ The tool runs on a cron schedule inside a Docker container. It syncs with the Gi
 | GitHub API | `google/go-github/v69` |
 | Database | SQLite (pure Go, no CGO) |
 | Web server | `net/http` + chi router |
-| UI | Go templates + htmx + Tailwind CSS |
+| UI | Go templates + htmx |
 | Git operations | `git` CLI via `os/exec` |
 | Scheduling | `robfig/cron/v3` |
 
@@ -67,7 +67,7 @@ Go to `http://localhost:8090`. The first-run wizard asks you to create a usernam
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `ENCRYPTION_KEY` | No | auto-generated | 32 bytes, base64. AES-256 key for encrypting the GitHub token. If not set, the app generates one on first run and saves it to the data directory. |
+| `ENCRYPTION_KEY` | No | auto-generated | 32 bytes, base64. AES-256 key for encrypting the GitHub token. If not set, gh-vault looks for a Docker secret, then a file in the data directory, and auto-generates one if neither exists. |
 | `PORT` | No | `8090` | Port the web dashboard listens on. |
 | `BACKUP_DIR` | No | `/backups` | Container path for git clones and bundles. |
 | `DATA_DIR` | No | `/config` | Container path for the SQLite database and encrypted secrets. |
@@ -77,28 +77,41 @@ Go to `http://localhost:8090`. The first-run wizard asks you to create a usernam
 
 | Container Path | Purpose |
 |---|---|
-| `/config` | SQLite database, encrypted secrets, encryption key, app state. Small. Churns frequently. |
+| `/config` | SQLite database, encrypted secrets, encryption key, app state. Small. Changes often. |
 | `/backups` | Git clones (`active/`), git bundles (`archived/`). Large. Append-mostly. |
 
 Keep these on separate datasets. This lets you snapshot and retain them independently.
 
 ## Backup Formats
 
-**Bare clone** (`active/owner/name.git`): A full mirror of the repository. Supports incremental `fetch`. This is the default for new repos.
+**Bare clone** (`active/owner/name.git`): A full mirror of the repo. Supports incremental `fetch`. This is the default for new repos.
 
-**Git bundle** (`archived/owner/name.bundle`): A single file containing the full repository history. Good for offline storage. Use the dashboard to switch a repo from clone to bundle.
+**Git bundle** (`archived/owner/name.bundle`): A single file containing the full repo history. Good for offline storage. Use the dashboard to switch a repo from clone to bundle.
 
 ## GitHub Token
 
-gh-vault stores your GitHub token encrypted in SQLite. You set it through the web dashboard at `/settings`.
+gh-vault encrypts your GitHub token and stores it in SQLite. You set the token through the web dashboard at `/settings`.
 
 **Required scopes:**
 - Classic PAT: `repo`
 - Fine-grained PAT: `contents:read` + `metadata:read`
 
-**Token rotation:** Go to Settings and enter a new token. The change takes effect immediately. No container restart needed.
+**Token rotation:** Go to Settings and enter a new token. The change applies immediately. No container restart needed.
 
-**If you lose the encryption key:** You must re-enter your GitHub token. The encrypted data cannot be recovered without the key. The key is stored in the `/config` dataset. Back up this dataset to preserve the key.
+**If you lose the encryption key:** You must re-enter your GitHub token. The encrypted data cannot be recovered without the key. The key lives in the `/config` dataset. Save this dataset to preserve the key.
+
+## Encryption Key Lifecycle
+
+The encryption key protects your GitHub token at rest. Learn how the key works to prevent data loss.
+
+**How it is generated:** On first startup, if no key is configured, gh-vault generates a random 32-byte key and writes it to `{DATA_DIR}/encryption_key`. This file has `0600` permissions (owner read/write only).
+
+**Where it lives:** The key lives inside the `/config` Docker volume. If you copy this volume, you copy the key. If you lose this volume without `ENCRYPTION_KEY` set and no secret mounted at `/run/secrets/encryption_key`, your encrypted GitHub token is unrecoverable.
+
+**What to do:**
+- **Back up `/config` regularly.**
+- **Set `ENCRYPTION_KEY` in your environment** to keep the key after volume loss. The value must be exactly 32 bytes after base64 decoding. Generate one with: `openssl rand -base64 32`
+- **Do not share the key.** Anyone with the key can decrypt your GitHub token.
 
 ## Scheduler Jobs
 

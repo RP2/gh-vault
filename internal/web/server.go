@@ -42,7 +42,9 @@ type Server struct {
 	sched         scheduler.Scheduler
 	tokenProvider github.TokenProvider
 	ghClient      github.Client
-	setupDone     bool
+	setupDone       bool
+	rateLimiter     *rateLimiter
+	rateLimiterStop chan struct{}
 }
 
 func NewServer(
@@ -96,10 +98,16 @@ func NewServer(
 		tokenProvider: tokenProvider,
 		ghClient:      ghClient,
 		templates:     templates,
-		setupDone:     count > 0,
+		setupDone:       count > 0,
 	}
+	s.rateLimiter, s.rateLimiterStop = newRateLimiter()
+	go s.rateLimiter.cleanupLoop(s.rateLimiterStop)
 	s.router = s.setupRouter()
 	return s, nil
+}
+
+func (s *Server) Stop() {
+	close(s.rateLimiterStop)
 }
 
 func (s *Server) setupRouter() *chi.Mux {
