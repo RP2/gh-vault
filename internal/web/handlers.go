@@ -383,7 +383,15 @@ func (s *Server) handleBulkSetFormat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+
+	s.backupGuard.Lock()
+	defer s.backupGuard.Unlock()
+
+	ctx, cancel := background()
+	defer cancel()
+
 	seen := make(map[int64]struct{}, len(ids))
+	var succeeded, failed int
 	for _, idStr := range ids {
 		id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64)
 		if err != nil {
@@ -392,19 +400,58 @@ func (s *Server) handleBulkSetFormat(w http.ResponseWriter, r *http.Request) {
 		if _, dup := seen[id]; dup {
 			continue
 		}
+		seen[id] = struct{}{}
+
 		repo, err := s.repos.Get(id)
 		if err != nil {
 			slog.Error("bulk set format: lookup", "id", id, "error", err)
+			failed++
 			continue
 		}
 		if repo.GitHubDeleted {
 			continue
 		}
-		seen[id] = struct{}{}
+
+		// Already in target format — nothing to do.
+		if repo.Format == model.RepoFormat(format) {
+			succeeded++
+			continue
+		}
+
+		// If a backup exists, convert it. Otherwise just update the DB
+		// and let the next backup job create the correct format.
+		if repo.LastBackup != nil {
+			var switchErr error
+			if model.RepoFormat(format) == model.FormatBundle {
+				switchErr = s.engine.SwitchToBundle(ctx, repo)
+			} else {
+				switchErr = s.engine.SwitchToClone(ctx, repo)
+			}
+			if switchErr != nil {
+				slog.Error("bulk set format: convert", "id", id, "format", format, "error", switchErr)
+				failed++
+				// Fall back to DB-only update so next backup uses new format.
+				backupPath := syncpkg.PathForFormat(model.RepoFormat(format), repo.Owner, repo.Name)
+				if err := s.repos.SetFormat(id, model.RepoFormat(format), backupPath); err != nil {
+					slog.Error("bulk set format: db fallback", "id", id, "error", err)
+				}
+			} else {
+				succeeded++
+			}
+			continue
+		}
+
 		backupPath := syncpkg.PathForFormat(model.RepoFormat(format), repo.Owner, repo.Name)
 		if err := s.repos.SetFormat(id, model.RepoFormat(format), backupPath); err != nil {
 			slog.Error("bulk set format", "id", id, "error", err)
+			failed++
+		} else {
+			succeeded++
 		}
+	}
+	slog.Info("bulk set format completed", "format", format, "succeeded", succeeded, "failed", failed)
+	if failed > 0 {
+		w.Header().Set("HX-Trigger", `{"bulk-partial-failure":true}`)
 	}
 	w.WriteHeader(http.StatusAccepted)
 }
@@ -487,6 +534,9 @@ func (s *Server) handleBackupChecked(w http.ResponseWriter, r *http.Request) {
 		}
 		seen[id] = struct{}{}
 		go func(repoID int64) {
+			s.backupGuard.Lock()
+			defer s.backupGuard.Unlock()
+
 			ctx, cancel := background()
 			defer cancel()
 
@@ -592,6 +642,9 @@ func (s *Server) handleTriggerBackup(w http.ResponseWriter, r *http.Request) {
 				slog.Error("panic in background job", "panic", rec)
 			}
 		}()
+		s.backupGuard.Lock()
+		defer s.backupGuard.Unlock()
+
 		ctx, cancel := background()
 		defer cancel()
 

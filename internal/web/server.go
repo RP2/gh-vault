@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 
@@ -45,6 +46,7 @@ type Server struct {
 	setupDone       bool
 	rateLimiter     *rateLimiter
 	rateLimiterStop chan struct{}
+	backupGuard     sync.Mutex
 }
 
 func NewServer(

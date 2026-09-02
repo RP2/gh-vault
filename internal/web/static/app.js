@@ -14,6 +14,18 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
+// Show a warning alert for bulk-operation partial failures.
+document.addEventListener('bulk-partial-failure', function() {
+    var main = document.querySelector('main');
+    if (!main) return;
+    var alert = document.createElement('div');
+    alert.className = 'alert';
+    alert.setAttribute('role', 'alert');
+    alert.textContent = 'Some repositories could not be converted. Check the logs for details.';
+    main.insertBefore(alert, main.firstChild);
+    setTimeout(function() { alert.remove(); }, 5000);
+});
+
 // Client-side repo filter
 document.addEventListener('DOMContentLoaded', function() {
     var search = document.querySelector('input[type="search"][name="q"]');
@@ -60,7 +72,9 @@ document.addEventListener('DOMContentLoaded', function() {
         selectAll.addEventListener('change', function() {
             syncSelectAll(selectAll.checked);
             document.querySelectorAll('.repo-check').forEach(function(cb) {
-                cb.checked = selectAll.checked;
+                if (cb.closest('tr').style.display !== 'none') {
+                    cb.checked = selectAll.checked;
+                }
             });
             updateActionButtons();
         });
@@ -119,6 +133,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 body: new URLSearchParams(params)
             }).then(function(res) {
                 flashButton(btn, res.ok, original);
+                var trigger = res.headers.get('HX-Trigger');
+                if (trigger) {
+                    try {
+                        var detail = JSON.parse(trigger);
+                        for (var eventName in detail) {
+                            if (Object.prototype.hasOwnProperty.call(detail, eventName)) {
+                                document.body.dispatchEvent(new CustomEvent(eventName, {detail: detail[eventName]}));
+                            }
+                        }
+                    } catch (e) {}
+                }
             }).catch(function() {
                 flashButton(btn, false, original);
             });
