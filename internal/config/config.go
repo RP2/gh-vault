@@ -21,12 +21,13 @@ type Config struct {
 	BackupDir string
 	// DataDir is the container path where the SQLite DB and encrypted secrets are stored.
 	DataDir string
-	// BaseURL is the public-facing URL. When it uses https, session cookies
-	// receive the Secure flag.
+	// BaseURL is the public-facing URL used for redirect targets.
 	BaseURL string
 	// EncryptionKey is the raw 32-byte AES-256 key used to encrypt the
 	// GitHub token. Decoded from base64.
 	EncryptionKey []byte
+	// DisableTLS, when true, serves plain HTTP instead of HTTPS.
+	DisableTLS bool
 }
 
 // Load reads configuration from environment variables and Docker secret
@@ -64,6 +65,19 @@ func Load() *Config {
 		c.BaseURL = v
 	}
 
+	if v := os.Getenv("DISABLE_TLS"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			c.DisableTLS = b
+		} else {
+			switch strings.ToLower(v) {
+			case "yes", "on", "y":
+				c.DisableTLS = true
+			case "no", "off", "n":
+				c.DisableTLS = false
+			}
+		}
+	}
+
 	c.EncryptionKey = loadEncryptionKey(c.DataDir)
 
 	return c
@@ -96,6 +110,12 @@ func loadEncryptionKey(dataDir string) []byte {
 	}
 
 	if raw == "" {
+		dbPath := filepath.Join(dataDir, "gh-vault.db")
+		if _, err := os.Stat(dbPath); err == nil {
+			slog.Error("ENCRYPTION_KEY is required when a database already exists. Set the ENCRYPTION_KEY environment variable to a base64-encoded 32-byte key. Auto-generation refused to prevent silent key rotation.")
+			os.Exit(1)
+		}
+
 		keyBytes := make([]byte, 32)
 		if _, err := rand.Read(keyBytes); err != nil {
 			slog.Error("failed to generate encryption key", "error", err)
@@ -125,7 +145,7 @@ func loadEncryptionKey(dataDir string) []byte {
 			os.Remove(tmpPath)
 			os.Exit(1)
 		}
-		slog.Warn("auto-generated encryption key", "path", keyPath)
+		slog.Info("auto-generated encryption key")
 	}
 
 	decoded, err := base64.StdEncoding.DecodeString(raw)

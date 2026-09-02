@@ -1,6 +1,11 @@
+// Package web rate limiting is in-memory only and resets on container restart.
+// It identifies clients by r.RemoteAddr, which may be the reverse proxy's IP
+// rather than the real client when deployed behind Traefik, nginx, or similar.
+// For production deployments, configure rate limiting at the reverse proxy layer.
 package web
 
 import (
+	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -44,6 +49,7 @@ func (rl *rateLimiter) allow(ip string) bool {
 	}
 
 	if now.Before(attempt.lockedUntil) {
+		slog.Warn("auth.rate_limit.locked", "ip", ip)
 		return false
 	}
 
@@ -57,6 +63,7 @@ func (rl *rateLimiter) allow(ip string) bool {
 
 	if len(attempt.attempts) >= rateLimitAttempts {
 		attempt.lockedUntil = now.Add(rateLimitLockout)
+		slog.Warn("auth.rate_limit.locked", "ip", ip)
 		return false
 	}
 

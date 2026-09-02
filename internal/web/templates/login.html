@@ -11,6 +11,11 @@
             {{end}}
         </div>
         {{end}}
+        {{if .Message}}
+        <div class="alert success" role="alert">
+            {{.Message}}
+        </div>
+        {{end}}
         <form method="POST" action="/login">
             <div class="form-group">
                 <label for="username">Username</label>

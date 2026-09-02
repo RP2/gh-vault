@@ -179,7 +179,7 @@ func (s *CronScheduler) addJobs(syncExpr string) error {
 		{name: "backup", expr: "0 2 * * *", fn: s.backupJob},
 		{name: "verify", expr: "0 4 * * 0", fn: s.verifyJob},
 		{name: "log_cleanup", expr: "0 5 * * *", fn: s.logCleanupJob},
-		{name: "session_cleanup", expr: "5 5 * * *", fn: s.sessionCleanupJob},
+		{name: "session_cleanup", expr: "*/10 * * * *", fn: s.sessionCleanupJob},
 	}
 
 	for _, j := range jobs {

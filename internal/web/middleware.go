@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"crypto/subtle"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -41,9 +42,9 @@ func (s *Server) stateMachine(next http.Handler) http.Handler {
 		// Step 3: Valid session but no token → redirect to /settings
 		if session != nil {
 			hasToken := s.hasToken(r.Context())
-		if !hasToken && path != "/settings" && path != "/settings/token" &&
-			path != "/settings/token-status" && path != "/sync" &&
-			path != "/backup-all" && path != "/logout" {
+			if !hasToken && path != "/settings" && path != "/settings/token" &&
+				path != "/settings/token-status" && path != "/sync" &&
+				path != "/backup-all" && path != "/logout" {
 				http.Redirect(w, r, "/settings?reason=token_missing", http.StatusFound)
 				return
 			}
@@ -61,6 +62,17 @@ func noCacheMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 		w.Header().Set("Pragma", "no-cache")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// bodyLimitMiddleware caps the request body to 64 KB on non-GET methods.
+// This must run before csrfMiddleware, which reads the body via r.FormValue.
+func bodyLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -91,13 +103,28 @@ func (s *Server) csrfMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// Skip CSRF for login, setup, healthz
-		if r.URL.Path == "/login" || r.URL.Path == "/setup" || r.URL.Path == "/healthz" {
+		// Skip CSRF for login and healthz. Setup uses a double-submit cookie
+		// because no session exists before the first account is created.
+		if r.URL.Path == "/login" || r.URL.Path == "/healthz" {
 			next.ServeHTTP(w, r)
 			return
 		}
+
+		// Setup POST is validated against the setup CSRF cookie set by GET /setup.
+		if r.URL.Path == "/setup" {
+			expected := setupCSRFTokenFromRequest(r)
+			if expected == "" || subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(expected)) != 1 {
+				http.Error(w, "Forbidden: invalid CSRF token", http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		session := sessionFromContext(r)
 		if session == nil {
+			// CSRF tokens are session-bound; unauthenticated routes rely on
+			// state-machine middleware for protection.
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -114,11 +141,14 @@ func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		if r.TLS != nil {
+			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		}
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		w.Header().Set("X-Robots-Tag", "noai, noimageai")
+		w.Header().Set("X-DNS-Prefetch-Control", "off")
 		next.ServeHTTP(w, r)
 	})
 }

@@ -1,19 +1,19 @@
 # gh-vault
 
-Self-hosted GitHub backup tool. Runs in Docker. Saves your repos on a schedule. Includes a web dashboard to manage repos.
+Self-hosted GitHub backup tool. Runs in Docker. Backs up your repos on a schedule. Includes a web dashboard.
 
 ## What It Does
 
-gh-vault clones your GitHub repos and stores them locally. Active repos get full bare clones. Archived repos get git bundles.
-
-gh-vault runs on a cron schedule inside a Docker container. It syncs with the GitHub API, saves changed repos, and logs every action.
+gh-vault clones your GitHub repos and stores them locally. It runs inside a Docker container on a cron schedule. It syncs with the GitHub API, saves changed repos, and logs every action.
 
 ## Features
 
 - **Scheduled backups.** Sync and backup run on cron. Default sync runs monthly. Backup runs daily.
-- **Web dashboard.** View all repos, trigger backups, switch formats. Uses htmx. No JavaScript framework.
+- **Web dashboard.** View all repos, trigger backups, switch formats. Built with htmx. No JavaScript framework.
 - **Two backup formats.** Bare clones for active repos. Git bundles for offline storage. Switch between them from the dashboard.
-- **Encrypted token storage.** gh-vault encrypts your GitHub token with AES-256-GCM in SQLite. gh-vault generates and manages its own encryption key.
+- **HTTPS by default.** gh-vault generates a self-signed certificate on first start and serves over HTTPS. Set `DISABLE_TLS=true` for plain HTTP behind a reverse proxy.
+- **Encrypted token storage.** gh-vault encrypts your GitHub token with AES-256-GCM in SQLite. The encryption key is managed automatically.
+- **Password change.** Change your password from the settings page. All sessions are invalidated on change.
 - **Activity log.** gh-vault logs every backup and sync action. Logs rotate based on your retention setting.
 - **Single-user auth.** Session-based login with bcrypt-hashed password. First-run wizard creates your account.
 
@@ -28,6 +28,7 @@ gh-vault runs on a cron schedule inside a Docker container. It syncs with the Gi
 | UI | Go templates + htmx |
 | Git operations | `git` CLI via `os/exec` |
 | Scheduling | `robfig/cron/v3` |
+| TLS | ECDSA P-256 self-signed certificate (auto-generated) |
 
 ## Quick Start
 
@@ -39,6 +40,12 @@ services:
     image: ghcr.io/rp2/gh-vault:main
     container_name: gh-vault
     restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    user: "568:568"
     ports:
       - "8090:8090"
     volumes:
@@ -46,8 +53,10 @@ services:
       - /path/to/backups:/backups
     environment:
       - PORT=8090
+      - DATA_DIR=/config
+      - BACKUP_DIR=/backups
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8090/healthz"]
+      test: ["CMD", "curl", "-kf", "https://localhost:8090/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -61,23 +70,26 @@ docker compose up -d
 
 ### 3. Open the dashboard
 
-Go to `http://localhost:8090`. The first-run wizard asks you to create a username and password. Then it asks for your GitHub token.
+Go to `https://localhost:8090`. Your browser shows a warning about the self-signed certificate. Accept it to proceed.
+
+The first-run wizard asks you to create a username and password. Then it asks for your GitHub token.
 
 ## Environment Variables
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `ENCRYPTION_KEY` | No | auto-generated | 32 bytes, base64. AES-256 key for encrypting the GitHub token. If not set, gh-vault looks for a Docker secret, then a file in the data directory, and auto-generates one if neither exists. |
+| `ENCRYPTION_KEY` | No | auto-generated | 32 bytes, base64. AES-256 key for encrypting the GitHub token. |
 | `PORT` | No | `8090` | Port the web dashboard listens on. |
 | `BACKUP_DIR` | No | `/backups` | Container path for git clones and bundles. |
 | `DATA_DIR` | No | `/config` | Container path for the SQLite database and encrypted secrets. |
-| `BASE_URL` | No | `http://localhost:8090` | Public URL. If it uses HTTPS, session cookies get the Secure flag. |
+| `BASE_URL` | No | `http://localhost:8090` | Public URL for redirect targets. |
+| `DISABLE_TLS` | No | `false` | Set to `true` for plain HTTP. Use this when a reverse proxy handles TLS. |
 
 ## Volume Layout
 
 | Container Path | Purpose |
 |---|---|
-| `/config` | SQLite database, encrypted secrets, encryption key, app state. Small. Changes often. |
+| `/config` | SQLite database, encrypted secrets, TLS certificate, app state. Small. Changes often. |
 | `/backups` | Git clones (`active/`), git bundles (`archived/`). Large. Append-mostly. |
 
 Keep these on separate datasets. This lets you snapshot and retain them independently.
@@ -102,9 +114,11 @@ gh-vault encrypts your GitHub token and stores it in SQLite. You set the token t
 
 ## Encryption Key Lifecycle
 
-The encryption key protects your GitHub token at rest. Learn how the key works to prevent data loss.
+The encryption key protects your GitHub token at rest.
 
 **How it is generated:** On first startup, if no key is configured, gh-vault generates a random 32-byte key and writes it to `{DATA_DIR}/encryption_key`. This file has `0600` permissions (owner read/write only).
+
+If a database already exists and no key is found, gh-vault refuses to auto-generate. This prevents silent key rotation. You must set `ENCRYPTION_KEY` explicitly.
 
 **Where it lives:** The key lives inside the `/config` Docker volume. If you copy this volume, you copy the key. If you lose this volume without `ENCRYPTION_KEY` set and no secret mounted at `/run/secrets/encryption_key`, your encrypted GitHub token is unrecoverable.
 
@@ -112,6 +126,16 @@ The encryption key protects your GitHub token at rest. Learn how the key works t
 - **Back up `/config` regularly.**
 - **Set `ENCRYPTION_KEY` in your environment** to keep the key after volume loss. The value must be exactly 32 bytes after base64 decoding. Generate one with: `openssl rand -base64 32`
 - **Do not share the key.** Anyone with the key can decrypt your GitHub token.
+
+**Key co-location warning:** The encryption key and the encrypted database both live in `/config`. A process with filesystem access to this directory can read both files. For stronger protection, set `ENCRYPTION_KEY` via Docker secret at `/run/secrets/encryption_key` and remove the auto-generated file.
+
+## TLS
+
+gh-vault generates a self-signed ECDSA P-256 certificate on first startup. The certificate is valid for 1 year and includes SANs for `localhost`, `127.0.0.1`, `::1`, and the container hostname.
+
+The certificate files live at `{DATA_DIR}/tls/cert.pem` and `{DATA_DIR}/tls/key.pem`. gh-vault validates these files on every startup. If the files are corrupt, missing, or the hostname changes, gh-vault regenerates them automatically.
+
+**Behind a reverse proxy:** Set `DISABLE_TLS=true` and point your proxy at `http://gh-vault:8090`.
 
 ## Scheduler Jobs
 
@@ -125,7 +149,23 @@ Backup runs `git clone` or `git fetch` to download repository contents. It runs 
 | backup | Daily at 02:00 | Clones or fetches all repos with backup enabled. Up to 3 concurrent. |
 | verify | Weekly (Sunday 04:00) | Runs `git fsck` on clones and `git bundle verify` on bundles. |
 | log_cleanup | Daily at 05:00 | Deletes logs older than your retention setting. |
-| session_cleanup | Daily at 05:30 | Deletes expired sessions. |
+| session_cleanup | Every 10 minutes | Deletes expired sessions. |
+
+## Security
+
+- Container runs as non-root (UID 568) with read-only filesystem and all capabilities dropped.
+- Passwords are hashed with bcrypt (cost 12). The login endpoint uses constant-time comparison to prevent timing attacks.
+- Session cookies use `HttpOnly`, `SameSite=Strict`, and `Secure` flags. Sessions expire after 24 hours.
+- CSRF protection on all state-changing endpoints, including the setup wizard.
+- Rate limiting on login and password change (5 attempts per 15 minutes per IP).
+- Session IDs are stored as SHA-256 hashes in the database.
+- All sessions are invalidated when you change your password.
+- Security headers: `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Strict-Transport-Security`, `Content-Security-Policy`.
+
+**Known limitations:**
+- The encryption key and encrypted database are co-located in `/config`. A process with filesystem access can read both. Use a Docker secret for the key in production.
+- Rate limiting is in-memory and resets on container restart.
+- Rate limiting uses the connecting IP directly. When behind a reverse proxy, all clients may share the proxy's IP. Configure rate limiting at the proxy layer instead.
 
 ## Restore Procedure
 

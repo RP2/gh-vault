@@ -3,7 +3,6 @@ package web
 import (
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/RP2/gh-vault/internal/model"
@@ -27,9 +26,7 @@ func (s *Server) createSession(w http.ResponseWriter, userID int64) error {
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   86400,
 	}
-	if strings.HasPrefix(s.cfg.BaseURL, "https") {
-		cookie.Secure = true
-	}
+	cookie.Secure = !s.cfg.DisableTLS
 	http.SetCookie(w, cookie)
 	return nil
 }
@@ -51,9 +48,7 @@ func (s *Server) destroySession(w http.ResponseWriter, r *http.Request) error {
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
 	}
-	if strings.HasPrefix(s.cfg.BaseURL, "https") {
-		clearCookie.Secure = true
-	}
+	clearCookie.Secure = !s.cfg.DisableTLS
 	http.SetCookie(w, clearCookie)
 	return nil
 }

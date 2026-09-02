@@ -2,6 +2,7 @@ package store
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -15,6 +16,7 @@ type SessionStore interface {
 	Create(userID int64, ttl time.Duration) (model.Session, error)
 	Get(id string) (*model.Session, error)
 	Delete(id string) error
+	DeleteAllForUser(userID int64) error
 	DeleteExpired() (int64, error)
 }
 
@@ -29,6 +31,8 @@ const sessionGetSQL = "SELECT " + sessionColumns + " FROM sessions WHERE id = ?"
 
 const sessionDeleteSQL = "DELETE FROM sessions WHERE id = ?"
 
+const sessionDeleteAllForUserSQL = "DELETE FROM sessions WHERE user_id = ?"
+
 const sessionListForExpirySQL = "SELECT id, expires_at FROM sessions"
 
 func newRandomToken() (string, error) {
@@ -37,6 +41,14 @@ func newRandomToken() (string, error) {
 		return "", fmt.Errorf("rand read: %w", err)
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// hashSessionID returns the SHA-256 hex digest of a raw session ID. The digest
+// is used as the primary key in the sessions table so that a compromised
+// database does not reveal usable session identifiers.
+func hashSessionID(id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *sessionsStore) Create(userID int64, ttl time.Duration) (model.Session, error) {
@@ -52,7 +64,7 @@ func (s *sessionsStore) Create(userID int64, ttl time.Duration) (model.Session, 
 	now := time.Now().UTC()
 	expires := now.Add(ttl)
 
-	_, err = s.db.Exec(sessionInsertSQL, id, userID, csrf, expires, now)
+	_, err = s.db.Exec(sessionInsertSQL, hashSessionID(id), userID, csrf, expires, now)
 	if err != nil {
 		return model.Session{}, fmt.Errorf("store: create session: %w", err)
 	}
@@ -68,7 +80,7 @@ func (s *sessionsStore) Create(userID int64, ttl time.Duration) (model.Session, 
 
 func (s *sessionsStore) Get(id string) (*model.Session, error) {
 	var sess model.Session
-	err := s.db.QueryRow(sessionGetSQL, id).Scan(
+	err := s.db.QueryRow(sessionGetSQL, hashSessionID(id)).Scan(
 		&sess.ID, &sess.UserID, &sess.CSRFToken, &sess.ExpiresAt, &sess.CreatedAt,
 	)
 	if err != nil {
@@ -84,9 +96,17 @@ func (s *sessionsStore) Get(id string) (*model.Session, error) {
 }
 
 func (s *sessionsStore) Delete(id string) error {
-	_, err := s.db.Exec(sessionDeleteSQL, id)
+	_, err := s.db.Exec(sessionDeleteSQL, hashSessionID(id))
 	if err != nil {
 		return fmt.Errorf("store: delete session: %w", err)
+	}
+	return nil
+}
+
+func (s *sessionsStore) DeleteAllForUser(userID int64) error {
+	_, err := s.db.Exec(sessionDeleteAllForUserSQL, userID)
+	if err != nil {
+		return fmt.Errorf("store: delete all sessions for user %d: %w", userID, err)
 	}
 	return nil
 }

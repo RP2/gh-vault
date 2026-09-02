@@ -21,10 +21,17 @@ services:
       - PORT=8090
       - DATA_DIR=/config
       - BACKUP_DIR=/backups
+      # - DISABLE_TLS=true   # Uncomment for plain HTTP (e.g. behind a reverse proxy)
       # - BASE_URL=http://localhost:8090  # Set to your public URL. Use https:// for secure cookies.
       # - ENCRYPTION_KEY=                  # 32 bytes base64. Auto-generated if not set.
+      #
+      # Production notes:
+      # - When behind a reverse proxy, set DISABLE_TLS=true and configure TLS at the proxy.
+      # - Provide ENCRYPTION_KEY via Docker secret or env var; do not rely on auto-generation.
+      # - Rate limiting is in-memory and resets on restart; configure it at the proxy layer.
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8090/healthz"]
+      # Assumes HTTPS (default). If DISABLE_TLS=true, change to: curl -f http://localhost:8090/healthz
+      test: ["CMD", "curl", "-kf", "https://localhost:8090/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3

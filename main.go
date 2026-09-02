@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,11 +17,23 @@ import (
 	"github.com/RP2/gh-vault/internal/scheduler"
 	"github.com/RP2/gh-vault/internal/store"
 	reposync "github.com/RP2/gh-vault/internal/sync"
+	"github.com/RP2/gh-vault/internal/tlsutil"
 	"github.com/RP2/gh-vault/internal/web"
 )
 
 func main() {
 	cfg := config.Load()
+
+	certPath := ""
+	keyPath := ""
+	if !cfg.DisableTLS {
+		var err error
+		certPath, keyPath, err = tlsutil.EnsureSelfSignedCert(cfg.DataDir)
+		if err != nil {
+			slog.Error("failed to ensure TLS certificate", "error", err)
+			os.Exit(1)
+		}
+	}
 
 	db, err := store.New(cfg.DataDir + "/gh-vault.db")
 	if err != nil {
@@ -56,6 +69,11 @@ func main() {
 		WriteTimeout:      90 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+		TLSConfig: &tls.Config{
+			MinVersion:       tls.VersionTLS12,
+			CurvePreferences: []tls.CurveID{tls.X25519, tls.CurveP256},
+		},
 	}
 
 	done := make(chan struct{})
@@ -71,14 +89,25 @@ func main() {
 		if err := httpServer.Shutdown(ctx); err != nil {
 			slog.Error("shutdown error", "error", err)
 		}
+		tokenProvider.Wipe()
 	}()
 
-	slog.Info("starting server", "port", cfg.Port)
-	if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
-		slog.Error("server error", "error", err)
-		sched.Stop()
-		db.Close()
-		os.Exit(1)
+	if cfg.DisableTLS {
+		slog.Info("starting server", "port", cfg.Port, "tls", false)
+		if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
+			slog.Error("server error", "error", err)
+			sched.Stop()
+			db.Close()
+			os.Exit(1)
+		}
+	} else {
+		slog.Info("starting server", "port", cfg.Port, "tls", true, "cert", certPath)
+		if err := httpServer.ListenAndServeTLS(certPath, keyPath); err != http.ErrServerClosed {
+			slog.Error("server error", "error", err)
+			sched.Stop()
+			db.Close()
+			os.Exit(1)
+		}
 	}
 	<-done
 }

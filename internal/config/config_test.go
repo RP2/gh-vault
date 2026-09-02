@@ -88,6 +88,46 @@ func TestLoadBaseURLOverride(t *testing.T) {
 	}
 }
 
+func TestLoadDisableTLS(t *testing.T) {
+	t.Setenv("ENCRYPTION_KEY", generateValidKey(t))
+
+	t.Run("default false", func(t *testing.T) {
+		t.Setenv("DISABLE_TLS", "")
+
+		c := Load()
+
+		if c.DisableTLS {
+			t.Errorf("DisableTLS = true, want false")
+		}
+	})
+
+	trueValues := []string{"true", "TRUE", "True", "1", "yes", "on", "t", "T"}
+	for _, v := range trueValues {
+		t.Run(v+" is true", func(t *testing.T) {
+			t.Setenv("DISABLE_TLS", v)
+
+			c := Load()
+
+			if !c.DisableTLS {
+				t.Errorf("DisableTLS = false, want true for %q", v)
+			}
+		})
+	}
+
+	falseValues := []string{"false", "FALSE", "False", "0", "no", "off", "f", "F"}
+	for _, v := range falseValues {
+		t.Run(v+" is false", func(t *testing.T) {
+			t.Setenv("DISABLE_TLS", v)
+
+			c := Load()
+
+			if c.DisableTLS {
+				t.Errorf("DisableTLS = true, want false for %q", v)
+			}
+		})
+	}
+}
+
 func TestEncryptionKeyFromEnv(t *testing.T) {
 	keyBytes := make([]byte, 32)
 	if _, err := rand.Read(keyBytes); err != nil {

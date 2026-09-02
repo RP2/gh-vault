@@ -82,6 +82,11 @@ const v3DDL = `ALTER TABLE repos ADD COLUMN backup_enabled INTEGER NOT NULL DEFA
 
 const v4DDL = `ALTER TABLE repos ADD COLUMN private INTEGER NOT NULL DEFAULT 0;`
 
+// v5DDL clears existing sessions. Session IDs are now stored as SHA-256 hashes,
+// so pre-existing raw session identifiers are no longer valid and are removed
+// to force re-authentication after upgrade.
+const v5DDL = `DELETE FROM sessions;`
+
 type migration struct {
 	Version int
 	DDL     string
@@ -92,6 +97,7 @@ var migrations = []migration{
 	{Version: 2, DDL: v2DDL},
 	{Version: 3, DDL: v3DDL},
 	{Version: 4, DDL: v4DDL},
+	{Version: 5, DDL: v5DDL},
 }
 
 func runMigrations(db *sql.DB) error {

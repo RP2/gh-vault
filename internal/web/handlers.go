@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -116,8 +117,30 @@ func isHtmx(r *http.Request) bool {
 // Setup Wizard
 
 func (s *Server) handleSetupGet(w http.ResponseWriter, r *http.Request) {
+	token, err := generateCSRFToken()
+	if err != nil {
+		slog.Error("generate setup csrf token", "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	s.setSetupCSRFCookie(w, token)
 	s.renderTemplate(w, "setup", map[string]string{
-		"CSRFToken":   s.csrfToken(r),
+		"CSRFToken":   token,
+		"CurrentPath": r.URL.Path,
+	})
+}
+
+func (s *Server) renderSetupWithError(w http.ResponseWriter, r *http.Request, msg string) {
+	token, err := generateCSRFToken()
+	if err != nil {
+		slog.Error("generate setup csrf token", "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	s.setSetupCSRFCookie(w, token)
+	s.renderTemplate(w, "setup", map[string]string{
+		"Error":       msg,
+		"CSRFToken":   token,
 		"CurrentPath": r.URL.Path,
 	})
 }
@@ -133,14 +156,18 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	username := strings.TrimSpace(r.FormValue("username"))
+	username := strings.ToLower(strings.TrimSpace(r.FormValue("username")))
 	password := r.FormValue("password")
 	if username == "" || len(password) < 8 {
-		s.renderTemplate(w, "setup", map[string]string{
-			"Error":       "username is required and password must be at least 8 characters",
-			"CSRFToken":   s.csrfToken(r),
-			"CurrentPath": r.URL.Path,
-		})
+		s.renderSetupWithError(w, r, "username is required and password must be at least 8 characters")
+		return
+	}
+	if len(username) > 64 {
+		http.Error(w, "username too long", http.StatusBadRequest)
+		return
+	}
+	if len(password) > 256 {
+		http.Error(w, "password too long", http.StatusBadRequest)
 		return
 	}
 
@@ -155,19 +182,11 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("create user", "username", username, "error", err)
 		if errors.Is(err, store.ErrUsernameExists) {
-			s.renderTemplate(w, "setup", map[string]string{
-				"Error":       "username already exists",
-				"CSRFToken":   s.csrfToken(r),
-				"CurrentPath": r.URL.Path,
-			})
+			s.renderSetupWithError(w, r, "username already exists")
 			return
 		}
 		if errors.Is(err, store.ErrSingleUserOnly) {
-			s.renderTemplate(w, "setup", map[string]string{
-				"Error":       "an account already exists for this deployment",
-				"CSRFToken":   s.csrfToken(r),
-				"CurrentPath": r.URL.Path,
-			})
+			s.renderSetupWithError(w, r, "an account already exists for this deployment")
 			return
 		}
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -176,6 +195,7 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 
 	s.setupDone = true
 	s.rateLimiter.reset(clientIP(r.RemoteAddr))
+	s.clearSetupCSRFCookie(w)
 
 	if err := s.createSession(w, userID); err != nil {
 		slog.Error("create session", "error", err)
@@ -189,8 +209,23 @@ func (s *Server) handleSetupPost(w http.ResponseWriter, r *http.Request) {
 // Auth
 
 func (s *Server) handleLoginGet(w http.ResponseWriter, r *http.Request) {
+	reason := r.URL.Query().Get("reason")
+	msg := ""
+	switch reason {
+	case "password_changed":
+		msg = "Password changed. Please sign in with your new password."
+	}
+
+	errorVal := r.URL.Query().Get("error")
+	switch errorVal {
+	case "invalid", "locked":
+	default:
+		errorVal = ""
+	}
+
 	s.renderTemplate(w, "login", map[string]string{
-		"Error":       r.URL.Query().Get("error"),
+		"Error":       errorVal,
+		"Message":     msg,
 		"CSRFToken":   s.csrfToken(r),
 		"CurrentPath": r.URL.Path,
 	})
@@ -208,7 +243,7 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	username := r.FormValue("username")
+	username := strings.ToLower(strings.TrimSpace(r.FormValue("username")))
 	password := r.FormValue("password")
 
 	user, err := s.users.GetByUsername(username)
@@ -230,13 +265,21 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.rateLimiter.reset(ip)
+	if err := s.sessions.DeleteAllForUser(user.ID); err != nil {
+		slog.Error("delete existing sessions", "user_id", user.ID, "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("auth.login.success", "user_id", user.ID, "ip", ip)
 
 	if err := s.createSession(w, user.ID); err != nil {
 		slog.Error("create session", "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+
+	s.rateLimiter.reset(ip)
 
 	http.Redirect(w, r, "/", http.StatusFound)
 }
@@ -906,4 +949,74 @@ func (s *Server) handleSettingsTokenStatus(w http.ResponseWriter, r *http.Reques
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		slog.Error("encode token status", "error", err)
 	}
+}
+
+func (s *Server) handleSettingsPasswordPost(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r.RemoteAddr)
+	if !s.passwordRateLimiter.allow(ip) {
+		http.Error(w, "Too many attempts", http.StatusTooManyRequests)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	currentPW := r.FormValue("current_password")
+	newPW := r.FormValue("new_password")
+	if currentPW == "" || newPW == "" {
+		http.Error(w, "both passwords are required", http.StatusBadRequest)
+		return
+	}
+	if len(newPW) < 8 {
+		http.Error(w, "new password must be at least 8 characters", http.StatusBadRequest)
+		return
+	}
+	if len(newPW) > 256 {
+		http.Error(w, "new password must be at most 256 characters", http.StatusBadRequest)
+		return
+	}
+
+	// Identify the user from the session.
+	session := sessionFromContext(r)
+	if session == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Verify current password.
+	user, err := s.users.GetByID(session.UserID)
+	if err != nil {
+		slog.Error("password change: lookup user", "id", session.UserID, "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(currentPW)); err != nil {
+		http.Error(w, "current password is incorrect", http.StatusForbidden)
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(currentPW), []byte(newPW)) == 1 {
+		http.Error(w, "new password must differ from current password", http.StatusBadRequest)
+		return
+	}
+
+	// Hash and atomically store the new password and invalidate sessions.
+	newHash, err := bcrypt.GenerateFromPassword([]byte(newPW), 12)
+	if err != nil {
+		slog.Error("password change: hash", "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if err := s.users.ChangePassword(user.ID, string(newHash)); err != nil {
+		slog.Error("password change: update", "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	s.passwordRateLimiter.reset(ip)
+
+	slog.Info("auth.password.changed", "user_id", user.ID, "ip", ip)
+
+	http.Redirect(w, r, "/login?reason=password_changed", http.StatusFound)
 }

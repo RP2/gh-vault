@@ -1,7 +1,9 @@
 package store
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -513,16 +515,16 @@ func TestReposSetGitHubMetadata(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 
 	cases := []struct {
-		name      string
-		sizeKB    int64
-		language  *string
-		url       *string
-		archived  bool
-		private   bool
-		lastPush  *time.Time
-		wantLang  *string
-		wantURL   *string
-		wantPush  *time.Time
+		name     string
+		sizeKB   int64
+		language *string
+		url      *string
+		archived bool
+		private  bool
+		lastPush *time.Time
+		wantLang *string
+		wantURL  *string
+		wantPush *time.Time
 	}{
 		{
 			name:     "all pointers set",
@@ -771,6 +773,76 @@ func TestReposSetVerified(t *testing.T) {
 	}
 	if got.VerifiedAt != nil {
 		t.Errorf("VerifiedAt = %v, want nil", got.VerifiedAt)
+	}
+}
+
+func TestUsersChangePassword(t *testing.T) {
+	db := openTestDB(t)
+
+	id, err := db.Users().Create("alice", "hash1")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	// Create a session for the user so we can verify it is invalidated.
+	sess, err := db.Sessions().Create(id, time.Hour)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	if err := db.Users().ChangePassword(id, "hash2"); err != nil {
+		t.Fatalf("change password: %v", err)
+	}
+
+	user, err := db.Users().GetByID(id)
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	if user.PasswordHash != "hash2" {
+		t.Errorf("password hash = %q, want %q", user.PasswordHash, "hash2")
+	}
+
+	_, err = db.Sessions().Get(sess.ID)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected session to be invalidated, got err = %v", err)
+	}
+
+	if err := db.Users().ChangePassword(9999, "hash3"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ChangePassword(9999) error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestSessionsCreateAndGetHashesID(t *testing.T) {
+	db := openTestDB(t)
+
+	userID, err := db.Users().Create("alice", "hash1")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	sess, err := db.Sessions().Create(userID, time.Hour)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	got, err := db.Sessions().Get(sess.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if got.UserID != userID {
+		t.Errorf("UserID = %d, want %d", got.UserID, userID)
+	}
+
+	var storedID string
+	if err := db.db.QueryRow("SELECT id FROM sessions WHERE user_id = ?", userID).Scan(&storedID); err != nil {
+		t.Fatalf("select stored session id: %v", err)
+	}
+	if storedID == sess.ID {
+		t.Errorf("session id stored raw in database")
+	}
+	wantHash := fmt.Sprintf("%x", sha256.Sum256([]byte(sess.ID)))
+	if storedID != wantHash {
+		t.Errorf("stored id = %q, want sha256 hash %q", storedID, wantHash)
 	}
 }
 

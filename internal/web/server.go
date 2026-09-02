@@ -29,24 +29,26 @@ var templateFS embed.FS
 var staticFS embed.FS
 
 type Server struct {
-	cfg             *config.Config
-	router          *chi.Mux
-	templates       map[string]*template.Template
-	users           store.UserStore
-	sessions        store.SessionStore
-	settings        store.SettingsStore
-	repos           store.RepoStore
-	logs            store.LogStore
-	secrets         store.SecretStore
-	engine          backup.Engine
-	syncer          reposync.Syncer
-	sched           scheduler.Scheduler
-	tokenProvider   github.TokenProvider
-	ghClient        github.Client
-	setupDone       bool
-	rateLimiter     *rateLimiter
-	rateLimiterStop chan struct{}
-	backupGuard     sync.Mutex
+	cfg                     *config.Config
+	router                  *chi.Mux
+	templates               map[string]*template.Template
+	users                   store.UserStore
+	sessions                store.SessionStore
+	settings                store.SettingsStore
+	repos                   store.RepoStore
+	logs                    store.LogStore
+	secrets                 store.SecretStore
+	engine                  backup.Engine
+	syncer                  reposync.Syncer
+	sched                   scheduler.Scheduler
+	tokenProvider           github.TokenProvider
+	ghClient                github.Client
+	setupDone               bool
+	rateLimiter             *rateLimiter
+	rateLimiterStop         chan struct{}
+	passwordRateLimiter     *rateLimiter
+	passwordRateLimiterStop chan struct{}
+	backupGuard             sync.Mutex
 }
 
 func NewServer(
@@ -104,12 +106,15 @@ func NewServer(
 	}
 	s.rateLimiter, s.rateLimiterStop = newRateLimiter()
 	go s.rateLimiter.cleanupLoop(s.rateLimiterStop)
+	s.passwordRateLimiter, s.passwordRateLimiterStop = newRateLimiter()
+	go s.passwordRateLimiter.cleanupLoop(s.passwordRateLimiterStop)
 	s.router = s.setupRouter()
 	return s, nil
 }
 
 func (s *Server) Stop() {
 	close(s.rateLimiterStop)
+	close(s.passwordRateLimiterStop)
 }
 
 func (s *Server) setupRouter() *chi.Mux {
@@ -120,6 +125,7 @@ func (s *Server) setupRouter() *chi.Mux {
 	r.Use(securityHeaders)
 	r.Use(s.sessionMiddleware)
 	r.Use(noCacheMiddleware)
+	r.Use(bodyLimitMiddleware)
 	r.Use(s.stateMachine)
 	r.Use(s.csrfMiddleware)
 
@@ -159,6 +165,7 @@ func (s *Server) setupRouter() *chi.Mux {
 	r.Get("/settings", s.handleSettingsGet)
 	r.Post("/settings", s.handleSettingsPost)
 	r.Post("/settings/token", s.handleSettingsTokenPost)
+	r.Post("/settings/password", s.handleSettingsPasswordPost)
 	r.Get("/settings/token-status", s.handleSettingsTokenStatus)
 
 	return r

@@ -28,6 +28,7 @@ const (
 type TokenProvider interface {
 	GetToken(ctx context.Context) (string, error)
 	SetToken(ctx context.Context, token string) error
+	Wipe()
 }
 
 // DBTokenProvider implements TokenProvider backed by a SecretStore.
@@ -50,7 +51,7 @@ type TokenProvider interface {
 // and SetToken overwrites the cache so reads see the latest write.
 type DBTokenProvider struct {
 	mu          sync.Mutex
-	cache       string
+	cache       []byte
 	cacheValid  bool
 	secretStore store.SecretStore
 	encKey      []byte // 32-byte AES-256 key
@@ -86,20 +87,20 @@ func (p *DBTokenProvider) GetToken(_ context.Context) (string, error) {
 	defer p.mu.Unlock()
 
 	if p.cacheValid {
-		return p.cache, nil
+		return string(p.cache), nil
 	}
 
 	value, nonce, err := p.secretStore.Get(tokenKey)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			p.cache = ""
+			p.cache = nil
 			p.cacheValid = true
 			return "", nil
 		}
 		return "", fmt.Errorf("github: read token from store: %w", err)
 	}
 	if len(value) == 0 {
-		p.cache = ""
+		p.cache = nil
 		p.cacheValid = true
 		return "", nil
 	}
@@ -109,9 +110,9 @@ func (p *DBTokenProvider) GetToken(_ context.Context) (string, error) {
 		return "", err
 	}
 
-	p.cache = string(plaintext)
+	p.cache = plaintext
 	p.cacheValid = true
-	return p.cache, nil
+	return string(p.cache), nil
 }
 
 // SetToken encrypts token with AES-256-GCM using a freshly generated
@@ -141,9 +142,21 @@ func (p *DBTokenProvider) SetToken(_ context.Context, token string) error {
 		return fmt.Errorf("github: write token to store: %w", err)
 	}
 
-	p.cache = token
+	p.cache = []byte(token)
 	p.cacheValid = true
 	return nil
+}
+
+// Wipe zeros the in-memory token cache so the decrypted token is not
+// left in memory after the process shuts down.
+func (p *DBTokenProvider) Wipe() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := range p.cache {
+		p.cache[i] = 0
+	}
+	p.cache = nil
+	p.cacheValid = false
 }
 
 // decrypt opens the AES-256-GCM ciphertext under the provider's key.

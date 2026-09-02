@@ -34,5 +34,21 @@
             <button type="submit" title="Save GitHub personal access token">Save Token</button>
         </form>
     </article>
+
+    <article class="card">
+        <h2>Change Password</h2>
+        <form method="POST" action="/settings/password">
+            <input type="hidden" name="csrf" value="{{.CSRFToken}}">
+            <div class="form-group">
+                <label for="current_password">Current Password</label>
+                <input type="password" id="current_password" name="current_password" required title="Enter your current password">
+            </div>
+            <div class="form-group">
+                <label for="new_password">New Password</label>
+                <input type="password" id="new_password" name="new_password" required minlength="8" title="Enter a new password (at least 8 characters)">
+            </div>
+            <button type="submit" title="Change password and re-login">Change Password</button>
+        </form>
+    </article>
 </section>
 {{end}}
