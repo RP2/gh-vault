@@ -253,8 +253,8 @@ func (e *BackupEngine) SwitchToBundle(ctx context.Context, repo model.Repo) erro
 		return fmt.Errorf("backup: switch to bundle %s/%s step 1: %w", owner, name, err)
 	}
 
-	// Step 2: verify the bundle.
-	if err := e.runGit(ctx, []string{"bundle", "verify", temp}, ""); err != nil {
+	// Step 2: verify the bundle (must run inside the source repo).
+	if err := e.runGit(ctx, []string{"bundle", "verify", temp}, source); err != nil {
 		return fmt.Errorf("backup: switch to bundle %s/%s step 2: %w", owner, name, err)
 	}
 
