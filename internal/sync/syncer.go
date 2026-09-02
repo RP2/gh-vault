@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	gh "github.com/google/go-github/v69/github"
@@ -16,6 +17,8 @@ import (
 // Syncer coordinates repository metadata between GitHub and the local store.
 type Syncer interface {
 	SyncRepos(ctx context.Context) (SyncResult, error)
+	TryLock() bool
+	Unlock()
 }
 
 // SyncResult reports the outcome of a repository sync.
@@ -35,6 +38,7 @@ type SyncerImpl struct {
 	client github.Client
 	repos  store.RepoStore
 	logs   store.LogStore
+	mu     sync.Mutex
 }
 
 var _ Syncer = (*SyncerImpl)(nil)
@@ -46,6 +50,17 @@ func NewSyncer(client github.Client, repos store.RepoStore, logs store.LogStore)
 		repos:  repos,
 		logs:   logs,
 	}
+}
+
+// TryLock attempts to acquire the sync guard. It returns true if the lock was
+// acquired and false if a sync is already in progress.
+func (s *SyncerImpl) TryLock() bool {
+	return s.mu.TryLock()
+}
+
+// Unlock releases the sync guard.
+func (s *SyncerImpl) Unlock() {
+	s.mu.Unlock()
 }
 
 // SyncRepos reconciles the local repository store with the repositories returned

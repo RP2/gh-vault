@@ -53,7 +53,7 @@ func main() {
 		Addr:              ":" + strconv.Itoa(cfg.Port),
 		Handler:           srv,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      90 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
 	}

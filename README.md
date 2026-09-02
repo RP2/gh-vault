@@ -36,7 +36,7 @@ gh-vault runs on a cron schedule inside a Docker container. It syncs with the Gi
 ```yaml
 services:
   gh-vault:
-    image: ghcr.io/RP2/gh-vault:main
+    image: ghcr.io/rp2/gh-vault:main
     container_name: gh-vault
     restart: unless-stopped
     ports:

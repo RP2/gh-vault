@@ -83,6 +83,20 @@ function updateActionButtons() {
 
 // Wire bulk action buttons
 document.addEventListener('DOMContentLoaded', function() {
+    function flashButton(btn, ok, original) {
+        btn.textContent = ok ? '✓ Done' : '✗ Failed';
+        btn.disabled = true;
+        if (btn._flashTimer) {
+            clearTimeout(btn._flashTimer);
+        }
+        btn._flashTimer = setTimeout(function() {
+            btn.textContent = original;
+            btn.disabled = false;
+            btn._flashTimer = null;
+            updateActionButtons();
+        }, 1500);
+    }
+
     function setupBulkButton(btnId, url, extraParams) {
         var btn = document.getElementById(btnId);
         if (!btn) return;
@@ -92,6 +106,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 ids.push(cb.value);
             });
             if (ids.length === 0) return;
+            var original = btn.textContent;
+            btn.textContent = 'Working…';
+            btn.disabled = true;
             var params = Object.assign({ids: ids.join(',')}, extraParams);
             fetch(url, {
                 method: 'POST',
@@ -100,6 +117,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     'X-CSRF-Token': (document.querySelector('meta[name="csrf-token"]') || {}).content || ''
                 },
                 body: new URLSearchParams(params)
+            }).then(function(res) {
+                flashButton(btn, res.ok, original);
+            }).catch(function() {
+                flashButton(btn, false, original);
             });
         });
     }

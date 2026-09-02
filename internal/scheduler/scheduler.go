@@ -208,6 +208,12 @@ func (s *CronScheduler) wrapJob(name string, fn func(ctx context.Context)) func(
 }
 
 func (s *CronScheduler) syncJob(ctx context.Context) {
+	if !s.syncer.TryLock() {
+		slog.Warn("scheduler: sync already in progress, skipping")
+		return
+	}
+	defer s.syncer.Unlock()
+
 	result, err := s.syncer.SyncRepos(ctx)
 	if err != nil {
 		slog.Error("scheduler: sync job failed", "error", err)

@@ -72,7 +72,7 @@
   </td>
   <td>{{if .LastBackup}}{{.LastBackup.Format "2006-01-02 15:04"}}{{else}}—{{end}}</td>
   <td>
-    {{if .LastBackup}}<span>backed up{{if .VerifiedAt}} ✓{{end}}</span>
+    {{if .LastBackup}}<span>{{if eq .Format "clone"}}bare clone{{else if eq .Format "bundle"}}bundle{{else}}unknown{{end}}{{if .VerifiedAt}} ✓ verified{{end}}</span>
     {{else}}<span>—</span>{{end}}
   </td>
 </tr>

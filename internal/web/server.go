@@ -28,20 +28,20 @@ var templateFS embed.FS
 var staticFS embed.FS
 
 type Server struct {
-	cfg           *config.Config
-	router        *chi.Mux
-	templates     map[string]*template.Template
-	users         store.UserStore
-	sessions      store.SessionStore
-	settings      store.SettingsStore
-	repos         store.RepoStore
-	logs          store.LogStore
-	secrets       store.SecretStore
-	engine        backup.Engine
-	syncer        reposync.Syncer
-	sched         scheduler.Scheduler
-	tokenProvider github.TokenProvider
-	ghClient      github.Client
+	cfg             *config.Config
+	router          *chi.Mux
+	templates       map[string]*template.Template
+	users           store.UserStore
+	sessions        store.SessionStore
+	settings        store.SettingsStore
+	repos           store.RepoStore
+	logs            store.LogStore
+	secrets         store.SecretStore
+	engine          backup.Engine
+	syncer          reposync.Syncer
+	sched           scheduler.Scheduler
+	tokenProvider   github.TokenProvider
+	ghClient        github.Client
 	setupDone       bool
 	rateLimiter     *rateLimiter
 	rateLimiterStop chan struct{}
@@ -98,7 +98,7 @@ func NewServer(
 		tokenProvider: tokenProvider,
 		ghClient:      ghClient,
 		templates:     templates,
-		setupDone:       count > 0,
+		setupDone:     count > 0,
 	}
 	s.rateLimiter, s.rateLimiterStop = newRateLimiter()
 	go s.rateLimiter.cleanupLoop(s.rateLimiterStop)

@@ -1,10 +1,12 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -325,7 +327,7 @@ func (s *Server) handleReposList(w http.ResponseWriter, r *http.Request) {
 	s.renderTemplate(w, "repos", data)
 }
 
-func (s *Server) renderReposTbody(w http.ResponseWriter, r *http.Request) error {
+func (s *Server) renderReposTbody(w io.Writer, r *http.Request) error {
 	repos, err := s.repos.List()
 	if err != nil {
 		return err
@@ -525,24 +527,56 @@ func (s *Server) handleBackupChecked(w http.ResponseWriter, r *http.Request) {
 // Triggers
 
 func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
-	go func() {
-		defer func() {
-			if rec := recover(); rec != nil {
-				slog.Error("panic in sync job", "panic", rec)
+	if !s.syncer.TryLock() {
+		slog.Warn("sync already in progress, skipping")
+		if isHtmx(r) {
+			var buf bytes.Buffer
+			if err := s.renderReposTbody(&buf, r); err != nil {
+				slog.Error("render repos tbody", "error", err)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
 			}
-		}()
-		ctx, cancel := background()
-		defer cancel()
-		if _, err := s.syncer.SyncRepos(ctx); err != nil {
-			slog.Error("trigger sync", "error", err)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			buf.WriteTo(w)
+			return
 		}
-	}()
-
-	if r.Header.Get("HX-Request") == "true" {
-		w.Header().Set("HX-Redirect", "/repos")
-	} else {
 		http.Redirect(w, r, "/repos", http.StatusFound)
+		return
 	}
+	defer s.syncer.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	result, err := s.syncer.SyncRepos(ctx)
+	if err != nil {
+		slog.Error("trigger sync",
+			"error", err,
+			"added", result.Added,
+			"updated", result.Updated,
+			"renamed", result.Renamed,
+			"transferred", result.Transferred,
+			"deleted", result.Deleted,
+			"restored", result.Restored,
+			"unchanged", result.Unchanged,
+			"errors", result.ErrorCount,
+		)
+	}
+
+	if isHtmx(r) {
+		var buf bytes.Buffer
+		if renderErr := s.renderReposTbody(&buf, r); renderErr != nil {
+			slog.Error("render repos tbody after sync", "error", renderErr)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err != nil {
+			w.Header().Set("HX-Trigger", `{"sync-failed":true}`)
+		}
+		buf.WriteTo(w)
+		return
+	}
+	http.Redirect(w, r, "/repos", http.StatusFound)
 }
 
 func (s *Server) handleTriggerBackup(w http.ResponseWriter, r *http.Request) {

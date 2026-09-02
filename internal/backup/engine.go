@@ -229,6 +229,7 @@ func (e *BackupEngine) CreateBundle(ctx context.Context, repo model.Repo) error 
 	if err := e.createBundle(ctx, repo, target); err != nil {
 		return fmt.Errorf("backup: create bundle %s/%s: %w", repo.Owner, repo.Name, err)
 	}
+	slog.Info("backup: bundle created", "owner", repo.Owner, "name", repo.Name)
 	if err := e.repos.SetVerified(repo.ID, nil); err != nil {
 		slog.Error("backup: clear verified_at", "repo", repo.Name, "error", err)
 	}
