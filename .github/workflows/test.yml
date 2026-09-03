@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# Straight-to-main pushes make this the only quality gate: never trim it to
+# PRs-only. Cancel superseded runs on rapid pushes.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -22,9 +28,6 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ matrix.go-version }}
-
-      - name: Download dependencies
-        run: go mod download
 
       - name: Verify dependencies
         run: go mod verify

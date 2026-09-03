@@ -7,6 +7,11 @@ on:
   pull_request:
     branches: [main]
 
+# Rapid pushes only need the latest :main image; cancel superseded builds.
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   packages: write

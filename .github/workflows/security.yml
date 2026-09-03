@@ -1,8 +1,17 @@
 name: Security Scan
 
+# govulncheck examines the dependency tree, not the code: a monthly cadence
+# catches newly published vulns without generating noise on a mostly dormant
+# project. Dep changes and PRs scan immediately; GitHub's Dependabot alerts
+# remain the always-on backstop.
 on:
+  schedule:
+    - cron: "0 13 1 * *"
   push:
     branches: [main]
+    paths:
+      - "go.mod"
+      - "go.sum"
   pull_request:
     branches: [main]
 
