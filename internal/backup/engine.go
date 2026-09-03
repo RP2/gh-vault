@@ -31,6 +31,7 @@ type Engine interface {
 	SwitchToClone(ctx context.Context, repo model.Repo) error
 	Verify(ctx context.Context, repo model.Repo) error
 	RemoveLocal(owner, name string) error
+	Reconcile(ctx context.Context) error
 }
 
 // BackupEngine implements Engine using the git CLI.
@@ -500,5 +501,60 @@ func (e *BackupEngine) RemoveLocal(owner, name string) error {
 		return fmt.Errorf("backup: remove local %s/%s: %w", owner, name, firstErr)
 	}
 	slog.Info("backup: removed local files", "owner", owner, "name", name)
+	return nil
+}
+
+// Reconcile resets stored backup state for repos whose backup files are
+// missing from disk — e.g. after a dataset restore, manual deletion, or disk
+// loss. It deletes nothing and clones nothing: the next backup run re-creates
+// missing copies (CloneRepo already handles absent targets), and the dashboard
+// reflects the true on-disk state in the meantime instead of stale dates.
+func (e *BackupEngine) Reconcile(ctx context.Context) error {
+	repos, err := e.repos.List()
+	if err != nil {
+		return fmt.Errorf("backup: reconcile: list repos: %w", err)
+	}
+
+	var missing int
+	for _, repo := range repos {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		// Only rows that claim a copy exists need checking; repos never backed
+		// up are already truthful.
+		if repo.LastBackup == nil && repo.VerifiedAt == nil {
+			continue
+		}
+
+		var path string
+		switch repo.Format {
+		case model.FormatClone:
+			path = e.activePath(repo.Owner, repo.Name)
+		case model.FormatBundle:
+			path = e.archivedPath(repo.Owner, repo.Name)
+		default:
+			continue
+		}
+
+		if _, err := os.Stat(path); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("backup: reconcile %s/%s: stat %s: %w", repo.Owner, repo.Name, path, err)
+		}
+
+		if err := e.repos.SetLastBackup(repo.ID, nil); err != nil {
+			slog.Error("backup: reconcile: reset last_backup", "owner", repo.Owner, "name", repo.Name, "error", err)
+			continue
+		}
+		if err := e.repos.SetVerified(repo.ID, nil); err != nil {
+			slog.Error("backup: reconcile: reset verified_at", "owner", repo.Owner, "name", repo.Name, "error", err)
+		}
+		missing++
+	}
+
+	if missing > 0 {
+		slog.Warn("backup: reconcile reset state for repos with missing files; next backup run re-clones them", "missing", missing, "repos", len(repos))
+	}
 	return nil
 }

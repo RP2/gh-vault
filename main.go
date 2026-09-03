@@ -45,6 +45,13 @@ func main() {
 	tokenProvider := github.NewDBTokenProvider(db.Secrets(), cfg.EncryptionKey)
 	ghClient := github.NewClient(tokenProvider)
 	backupEngine := backup.NewEngine(cfg.BackupDir, tokenProvider, db.Repos())
+
+	// Reset stored backup state for repos whose files are missing from disk
+	// (dataset restore, manual deletion). The next backup run re-clones them.
+	if err := backupEngine.Reconcile(context.Background()); err != nil {
+		slog.Warn("startup: backup state reconcile failed", "error", err)
+	}
+
 	syncer := reposync.NewSyncer(ghClient, db.Repos(), db.Logs(), backupEngine)
 	sessions := db.Sessions()
 	sched := scheduler.New(db.Settings(), syncer, backupEngine, db.Repos(), db.Logs(), sessions)

@@ -6,6 +6,33 @@ document.addEventListener('htmx:configRequest', function(e) {
     }
 });
 
+// The sync handler responds with the repos table body, which is meant for the
+// repos page's targeted swap. The dashboard discards that fragment and reloads
+// instead, so the counts, job banner, and recent activity reflect the result.
+// On a failed sync, surface an alert instead of reloading it away.
+document.addEventListener('htmx:afterRequest', function(e) {
+    var el = e.detail.elt;
+    if (!el || el.id !== 'btn-dashboard-sync') return;
+
+    var trigger = '';
+    if (e.detail.xhr) {
+        trigger = e.detail.xhr.getResponseHeader('HX-Trigger') || '';
+    }
+    if (trigger.indexOf('sync-failed') !== -1) {
+        var main = document.querySelector('main');
+        if (main) {
+            var alert = document.createElement('div');
+            alert.className = 'alert error';
+            alert.setAttribute('role', 'alert');
+            alert.textContent = 'Sync finished with errors. Check the logs for details.';
+            main.insertBefore(alert, main.firstChild);
+            setTimeout(function() { alert.remove(); }, 5000);
+        }
+        return;
+    }
+    window.location.reload();
+});
+
 // Auto-dismiss flash messages after 5 seconds
 document.addEventListener('DOMContentLoaded', function() {
     var alerts = document.querySelectorAll('.alert');

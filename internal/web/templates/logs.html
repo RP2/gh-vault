@@ -33,20 +33,22 @@
             </tbody>
         </table>
     </div>
-    <nav aria-label="Pagination">
-        <p>Page {{.Page}} · {{.Size}} per page</p>
-        <div class="row">
+    <nav aria-label="Pagination" class="pagination">
+        <span class="pagination-prev">
             {{if gt .Page 1}}
             <a href="/logs?page={{.PrevPage}}&size={{.Size}}">Prev</a>
             {{else}}
             <button disabled>Prev</button>
             {{end}}
+        </span>
+        <span class="pagination-status">Page {{.Page}} · {{.Size}} per page</span>
+        <span class="pagination-next">
             {{if .HasNext}}
             <a href="/logs?page={{.NextPage}}&size={{.Size}}">Next</a>
             {{else}}
             <button disabled>Next</button>
             {{end}}
-        </div>
+        </span>
     </nav>
     {{else}}
     <p>No logs found.</p>

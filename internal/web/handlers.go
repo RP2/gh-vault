@@ -712,6 +712,9 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	result, err := s.syncer.SyncRepos(ctx)
+	// Manual runs must record their own outcome; the scheduler only records
+	// cron-driven runs automatically.
+	s.sched.RecordRun("sync", err)
 	if err != nil {
 		slog.Error("trigger sync",
 			"error", err,
@@ -762,12 +765,20 @@ func (s *Server) handleTriggerBackup(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := background()
 		defer cancel()
 
+		// Same reconciliation the scheduled job does, so a manual run also
+		// notices a wiped or restored dataset.
+		if err := s.engine.Reconcile(ctx); err != nil {
+			slog.Error("trigger backup: reconcile", "error", err)
+		}
+
 		repos, err := s.repos.List()
 		if err != nil {
 			slog.Error("list repos for trigger backup", "error", err)
+			s.sched.RecordRun("backup", err)
 			return
 		}
 
+		var failed int
 		for _, repo := range repos {
 			if repo.GitHubDeleted || !repo.BackupEnabled {
 				continue
@@ -776,17 +787,20 @@ func (s *Server) handleTriggerBackup(w http.ResponseWriter, r *http.Request) {
 				if err := s.engine.CloneRepo(ctx, repo); err != nil {
 					slog.Error("backup repo", "owner", repo.Owner, "name", repo.Name, "error", err)
 					s.createLogEntry(repo.ID, "backup", "error", err.Error())
+					failed++
 					continue
 				}
 				if err := s.engine.CreateBundle(ctx, repo); err != nil {
 					slog.Error("create bundle", "owner", repo.Owner, "name", repo.Name, "error", err)
 					s.createLogEntry(repo.ID, "backup", "error", err.Error())
+					failed++
 					continue
 				}
 			} else {
 				if err := s.engine.CloneRepo(ctx, repo); err != nil {
 					slog.Error("backup repo", "owner", repo.Owner, "name", repo.Name, "error", err)
 					s.createLogEntry(repo.ID, "backup", "error", err.Error())
+					failed++
 					continue
 				}
 			}
@@ -795,6 +809,12 @@ func (s *Server) handleTriggerBackup(w http.ResponseWriter, r *http.Request) {
 				slog.Error("set last backup", "id", repo.ID, "error", err)
 			}
 			s.createLogEntry(repo.ID, "backup", "success", "triggered backup completed")
+		}
+
+		if failed > 0 {
+			s.sched.RecordRun("backup", fmt.Errorf("%d repos failed to back up", failed))
+		} else {
+			s.sched.RecordRun("backup", nil)
 		}
 	}()
 }

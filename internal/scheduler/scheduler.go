@@ -35,6 +35,9 @@ type Scheduler interface {
 	NextRun(jobName string) time.Time
 	IsRunning(jobName string) bool
 	LastResult(jobName string) (JobResult, bool)
+	// RecordRun stores the outcome of a manually triggered run so the
+	// dashboard banner reports the same truth for manual and scheduled runs.
+	RecordRun(jobName string, err error)
 }
 
 // CronScheduler implements Scheduler using robfig/cron/v3.
@@ -182,6 +185,16 @@ func (s *CronScheduler) LastResult(jobName string) (JobResult, bool) {
 	return res, ok
 }
 
+// RecordRun stores the outcome of a manually triggered run. Scheduled runs are
+// recorded automatically by wrapJob; manual ones must call this explicitly.
+func (s *CronScheduler) RecordRun(jobName string, err error) {
+	result := JobResult{FinishedAt: time.Now()}
+	if err != nil {
+		result.Error = err.Error()
+	}
+	s.results.Store(jobName, result)
+}
+
 func (s *CronScheduler) syncSchedule() string {
 	schedule, err := s.settings.Get("cron_schedule")
 	if err != nil {
@@ -266,6 +279,13 @@ func (s *CronScheduler) syncJob(ctx context.Context) error {
 }
 
 func (s *CronScheduler) backupJob(ctx context.Context) error {
+	// Notice files that vanished since the last run (dataset restore, manual
+	// deletion) so stored state matches disk before cloning. Non-fatal: the
+	// clone step below re-creates missing copies regardless.
+	if err := s.engine.Reconcile(ctx); err != nil {
+		slog.Error("scheduler: backup job: reconcile", "error", err)
+	}
+
 	repos, err := s.repos.List()
 	if err != nil {
 		slog.Error("scheduler: backup job: list repos", "error", err)

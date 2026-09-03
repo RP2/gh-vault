@@ -203,7 +203,7 @@ There is no in-container healthcheck; monitor the container externally instead (
 2. Restore the `/config` dataset. This includes the database, encrypted secrets, and encryption key.
 3. Start the container: `docker compose up -d`
 4. Optionally restore the `/backups` dataset.
-5. Run a sync from the dashboard to reconcile. The syncer detects missing backup paths and re-clones from GitHub.
+5. Start the container. On startup and before every backup run, gh-vault compares stored state against disk, clears stale `last backup` entries, and the next backup run re-clones anything missing from GitHub.
 
 ## Building from Source
 
