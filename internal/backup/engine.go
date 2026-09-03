@@ -151,6 +151,14 @@ func (e *BackupEngine) CloneRepo(ctx context.Context, repo model.Repo) error {
 				return fmt.Errorf("backup: clone %s/%s: remove stale clone: %w", repo.Owner, repo.Name, err)
 			}
 		} else {
+			// The origin remote was written by a previous clone and embeds the
+			// token that was valid back then (git persists it in the bare
+			// repo's config). Refresh it with the current token so that token
+			// rotation applies to existing clones instead of failing every
+			// fetch with the stale one.
+			if err := e.runGit(ctx, []string{"--git-dir=" + target, "remote", "set-url", "origin", url}, ""); err != nil {
+				return fmt.Errorf("backup: clone %s/%s: set origin: %w", repo.Owner, repo.Name, err)
+			}
 			if err := e.runGit(ctx, []string{"--git-dir=" + target, "fetch", "--prune", "origin"}, ""); err != nil {
 				slog.Error("backup: fetch failed", "owner", repo.Owner, "name", repo.Name, "error", err)
 				return fmt.Errorf("backup: clone %s/%s: %w", repo.Owner, repo.Name, err)
@@ -178,7 +186,8 @@ func (e *BackupEngine) CloneRepo(ctx context.Context, repo model.Repo) error {
 
 // FetchRepo fetches the latest state into an existing bare clone.
 func (e *BackupEngine) FetchRepo(ctx context.Context, repo model.Repo) error {
-	if _, err := e.tokenProvider.GetToken(ctx); err != nil {
+	url, err := e.authURL(ctx, repo.Owner, repo.Name)
+	if err != nil {
 		return fmt.Errorf("backup: fetch %s/%s: %w", repo.Owner, repo.Name, err)
 	}
 
@@ -192,6 +201,11 @@ func (e *BackupEngine) FetchRepo(ctx context.Context, repo model.Repo) error {
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("backup: fetch %s/%s: target is not a directory", repo.Owner, repo.Name)
+	}
+
+	// Refresh origin credentials with the current token (see CloneRepo).
+	if err := e.runGit(ctx, []string{"--git-dir=" + target, "remote", "set-url", "origin", url}, ""); err != nil {
+		return fmt.Errorf("backup: fetch %s/%s: set origin: %w", repo.Owner, repo.Name, err)
 	}
 
 	if err := e.runGit(ctx, []string{"--git-dir=" + target, "fetch", "--prune", "origin"}, ""); err != nil {

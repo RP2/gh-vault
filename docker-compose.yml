@@ -19,8 +19,8 @@ services:
       - /run:size=10m,noexec,nosuid
     environment:
       - PORT=8090
-      - DATA_DIR=/config
-      - BACKUP_DIR=/backups
+      # DATA_DIR and BACKUP_DIR are preset in the image to /config and /backups,
+      # the mount points above. Override only if you mount volumes elsewhere.
       # - DISABLE_TLS=true   # Uncomment for plain HTTP (e.g. behind a reverse proxy)
       # - BASE_URL=http://localhost:8090  # Set to your public URL. Use https:// for secure cookies.
       # - ENCRYPTION_KEY=                  # 32 bytes base64. Auto-generated if not set.

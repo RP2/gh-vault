@@ -47,16 +47,13 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    user: "568:568"
     ports:
-      - "8090:8090"
+      - 8090:8090
     volumes:
       - /path/to/config:/config
       - /path/to/backups:/backups
     environment:
       - PORT=8090
-      - DATA_DIR=/config
-      - BACKUP_DIR=/backups
       # - TZ=America/New_York  # Local time for cron schedules and displayed timestamps (default: UTC)
     logging:
       # Cap container logs so they cannot grow without bound on the host.
@@ -86,8 +83,8 @@ The first-run wizard asks you to create a username and password. Then it asks fo
 |---|---|---|---|
 | `ENCRYPTION_KEY` | No | auto-generated | 32 bytes, base64. AES-256 key for encrypting the GitHub token. |
 | `PORT` | No | `8090` | Port the web dashboard listens on. |
-| `BACKUP_DIR` | No | `/backups` | Container path for git clones and bundles. |
-| `DATA_DIR` | No | `/config` | Container path for the SQLite database and encrypted secrets. |
+| `BACKUP_DIR` | No | `/backups` | Container path for git clones and bundles. Preset in the image to the standard mount point; override only for non-Docker runs or custom volume paths. |
+| `DATA_DIR` | No | `/config` | Container path for the SQLite database and encrypted secrets. Preset in the image; same override rule. |
 | `BASE_URL` | No | `http://localhost:8090` | Public URL for redirect targets. |
 | `DISABLE_TLS` | No | `false` | Set to `true` for plain HTTP. Use this when a reverse proxy handles TLS. |
 | `TZ` | No | `UTC` | Timezone for cron schedules and displayed timestamps, e.g. `America/New_York`. The image includes `tzdata`. |

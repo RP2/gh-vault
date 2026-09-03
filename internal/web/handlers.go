@@ -462,6 +462,11 @@ func (s *Server) handleRepoPurge(w http.ResponseWriter, r *http.Request) {
 	if err := s.repos.SetBackupEnabled(id, false); err != nil {
 		slog.Error("purge repo: disable backup", "id", id, "error", err)
 	}
+	// Reset last_backup so the row matches disk: files are gone, and if the
+	// repo ever reappears on GitHub it should read as not yet copied.
+	if err := s.repos.SetLastBackup(id, nil); err != nil {
+		slog.Error("purge repo: reset last_backup", "id", id, "error", err)
+	}
 	if err := s.logs.Create(model.LogEntry{
 		RepoID:  repo.ID,
 		Action:  "backup.purged",

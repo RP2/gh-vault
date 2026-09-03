@@ -13,4 +13,8 @@ COPY --from=build /gh-vault /usr/local/bin/gh-vault
 # Run as non-root user.
 RUN addgroup -g 568 apps && adduser -u 568 -G apps -D -s /bin/sh apps
 USER apps
+# Container-path convention: these match the documented volume layout
+# (/config and /backups). Override only if you mount volumes elsewhere.
+ENV DATA_DIR=/config \
+    BACKUP_DIR=/backups
 ENTRYPOINT ["gh-vault"]
