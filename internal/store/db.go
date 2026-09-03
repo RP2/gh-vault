@@ -13,7 +13,10 @@ type DB struct {
 }
 
 func New(dbPath string) (*DB, error) {
-	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", url.QueryEscape(dbPath))
+	// synchronous(NORMAL) is the standard WAL-mode setting: commits no longer
+	// fsync the journal on every transaction. Durability on power loss is
+	// limited to the last checkpoint, which is acceptable for backup metadata.
+	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)", url.QueryEscape(dbPath))
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("store: open sqlite: %w", err)

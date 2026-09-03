@@ -8,13 +8,15 @@ gh-vault clones your GitHub repos and stores them locally. It runs inside a Dock
 
 ## Features
 
-- **Scheduled backups.** Sync and backup run on cron. Default sync runs monthly. Backup runs daily.
+- **Scheduled backups.** Sync and backup run on cron. Default sync runs daily at 23:00 (container local time). Backup follows at 23:30.
 - **Web dashboard.** View all repos, trigger backups, switch formats. Built with htmx. No JavaScript framework.
 - **Two backup formats.** Bare clones for active repos. Git bundles for offline storage. Switch between them from the dashboard.
 - **HTTPS by default.** gh-vault generates a self-signed certificate on first start and serves over HTTPS. Set `DISABLE_TLS=true` for plain HTTP behind a reverse proxy.
 - **Encrypted token storage.** gh-vault encrypts your GitHub token with AES-256-GCM in SQLite. The encryption key is managed automatically.
 - **Password change.** Change your password from the settings page. All sessions are invalidated on change.
 - **Activity log.** gh-vault logs every backup and sync action. Logs rotate based on your retention setting.
+- **Job status on the dashboard.** The last sync and backup outcomes are shown at the top of the dashboard, including failure reasons.
+- **Removed-repo handling.** Repos deleted from GitHub keep their local copy — that is the point of a backup. The dashboard lists them and lets you delete the local copy when you no longer want it.
 - **Single-user auth.** Session-based login with bcrypt-hashed password. First-run wizard creates your account.
 
 ## Tech Stack
@@ -55,12 +57,16 @@ services:
       - PORT=8090
       - DATA_DIR=/config
       - BACKUP_DIR=/backups
-    healthcheck:
-      test: ["CMD", "curl", "-kf", "https://localhost:8090/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+      # - TZ=America/New_York  # Local time for cron schedules and displayed timestamps (default: UTC)
+    logging:
+      # Cap container logs so they cannot grow without bound on the host.
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 ```
+
+The `:main` tag is rebuilt on every push. For a deployment that only changes when you decide, pin a version or digest tag instead — both are shown on the package page (e.g. `image: ghcr.io/rp2/gh-vault:main@sha256:0123abcd…`).
 
 ### 2. Start the container
 
@@ -84,6 +90,25 @@ The first-run wizard asks you to create a username and password. Then it asks fo
 | `DATA_DIR` | No | `/config` | Container path for the SQLite database and encrypted secrets. |
 | `BASE_URL` | No | `http://localhost:8090` | Public URL for redirect targets. |
 | `DISABLE_TLS` | No | `false` | Set to `true` for plain HTTP. Use this when a reverse proxy handles TLS. |
+| `TZ` | No | `UTC` | Timezone for cron schedules and displayed timestamps, e.g. `America/New_York`. The image includes `tzdata`. |
+
+## Timezone
+
+Cron schedules and displayed timestamps follow the container's local time. Set `TZ` to an IANA timezone name (`Area/City` format, e.g. `America/New_York`, `Europe/Berlin`). Without it, everything runs on UTC.
+
+**In docker-compose.yml:**
+
+```yaml
+    environment:
+      - TZ=America/New_York
+```
+
+**In a Dockerfile** — if you build your own image instead of using an env file or compose environment:
+
+```dockerfile
+FROM ghcr.io/RP2/gh-vault:main
+ENV TZ=America/New_York
+```
 
 ## Volume Layout
 
@@ -143,13 +168,21 @@ Sync calls the GitHub API to reconcile your local repo list. It adds new repos, 
 
 Backup runs `git clone` or `git fetch` to download repository contents. It runs on all repos with backup enabled.
 
+All times are container-local. Set `TZ` to your timezone so schedules and timestamps match your clock; without it everything runs on UTC.
+
 | Job | Schedule | What It Does |
 |---|---|---|
-| sync | Configurable (default: monthly) | Fetches repo list from GitHub. Detects new, renamed, transferred, and deleted repos. |
-| backup | Daily at 02:00 | Clones or fetches all repos with backup enabled. Up to 3 concurrent. |
+| sync | Configurable (default: daily 23:00) | Fetches repo list from GitHub. Detects new, renamed, transferred, and deleted repos. |
+| backup | Daily at 23:30 | Clones or fetches all repos with backup enabled. Up to 3 concurrent. |
 | verify | Weekly (Sunday 04:00) | Runs `git fsck` on clones and `git bundle verify` on bundles. |
 | log_cleanup | Daily at 05:00 | Deletes logs older than your retention setting. |
-| session_cleanup | Every 10 minutes | Deletes expired sessions. |
+| session_cleanup | Daily at 04:45 | Deletes expired sessions. |
+
+The sync schedule is configurable from the Settings page. Existing installs keep whatever schedule is stored in their database until changed there.
+
+## Monitoring
+
+There is no in-container healthcheck; monitor the container externally instead (logs via Dozzle, uptime via any checker). The `/healthz` endpoint returns 200 without authentication and is excluded from request logging, so a frequent monitor there costs no disk writes: `https://your-host:8090/healthz`.
 
 ## Security
 

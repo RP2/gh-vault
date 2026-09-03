@@ -45,7 +45,7 @@ func main() {
 	tokenProvider := github.NewDBTokenProvider(db.Secrets(), cfg.EncryptionKey)
 	ghClient := github.NewClient(tokenProvider)
 	backupEngine := backup.NewEngine(cfg.BackupDir, tokenProvider, db.Repos())
-	syncer := reposync.NewSyncer(ghClient, db.Repos(), db.Logs())
+	syncer := reposync.NewSyncer(ghClient, db.Repos(), db.Logs(), backupEngine)
 	sessions := db.Sessions()
 	sched := scheduler.New(db.Settings(), syncer, backupEngine, db.Repos(), db.Logs(), sessions)
 	srv, err := web.NewServer(cfg, db.Users(), db.Settings(), db.Repos(), db.Logs(), db.Secrets(), sessions, backupEngine, syncer, sched, tokenProvider, ghClient)

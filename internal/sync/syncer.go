@@ -33,22 +33,33 @@ type SyncResult struct {
 	ErrorCount  int
 }
 
+// BackupMover moves a repository's local backup to the paths of a new owner or
+// name after a GitHub rename or transfer. Implemented by the backup engine;
+// declared here so the syncer stays free of filesystem and git concerns.
+type BackupMover interface {
+	MoveBackup(ctx context.Context, oldOwner, oldName, newOwner, newName string, format model.RepoFormat) error
+}
+
 // SyncerImpl implements Syncer.
 type SyncerImpl struct {
 	client github.Client
 	repos  store.RepoStore
 	logs   store.LogStore
+	mover  BackupMover
 	mu     sync.Mutex
 }
 
 var _ Syncer = (*SyncerImpl)(nil)
 
-// NewSyncer creates a new SyncerImpl.
-func NewSyncer(client github.Client, repos store.RepoStore, logs store.LogStore) *SyncerImpl {
+// NewSyncer creates a new SyncerImpl. mover may be nil; without it, renamed or
+// transferred repos simply re-clone at their new paths and the old copies stay
+// on disk until removed manually.
+func NewSyncer(client github.Client, repos store.RepoStore, logs store.LogStore, mover BackupMover) *SyncerImpl {
 	return &SyncerImpl{
 		client: client,
 		repos:  repos,
 		logs:   logs,
+		mover:  mover,
 	}
 }
 
@@ -168,6 +179,15 @@ func (s *SyncerImpl) SyncRepos(ctx context.Context) (SyncResult, error) {
 			}); err != nil {
 				logger.Error("sync: create log entry", "error", err)
 				result.ErrorCount++
+			}
+
+			// Move the existing backup to the new path so it is not orphaned
+			// under the old owner/name. Failure is not fatal: the next backup
+			// re-clones at the new path, and the old copy stays on disk.
+			if s.mover != nil {
+				if err := s.mover.MoveBackup(ctx, stored.Owner, stored.Name, owner, name, stored.Format); err != nil {
+					logger.Warn("sync: could not move backup to renamed path; next backup will re-clone", "error", err)
+				}
 			}
 			continue
 		}

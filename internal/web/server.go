@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -27,6 +28,16 @@ var templateFS embed.FS
 
 //go:embed all:static
 var staticFS embed.FS
+
+// templateFuncs provides timestamp formatters that render in the server's
+// local timezone. Timestamps are stored in UTC; converting at render time
+// keeps the database unambiguous while displaying times that match the host
+// clock (set TZ to control it).
+var templateFuncs = template.FuncMap{
+	"fmtDate":        func(t time.Time) string { return t.Local().Format("2006-01-02") },
+	"fmtDateTime":    func(t time.Time) string { return t.Local().Format("2006-01-02 15:04") },
+	"fmtDateTimeSec": func(t time.Time) string { return t.Local().Format("2006-01-02 15:04:05") },
+}
 
 type Server struct {
 	cfg                     *config.Config
@@ -65,7 +76,7 @@ func NewServer(
 	tokenProvider github.TokenProvider,
 	ghClient github.Client,
 ) (*Server, error) {
-	layoutTmpl, err := template.ParseFS(templateFS, "templates/layout.html")
+	layoutTmpl, err := template.New("layout.html").Funcs(templateFuncs).ParseFS(templateFS, "templates/layout.html")
 	if err != nil {
 		return nil, fmt.Errorf("web: parse layout template: %w", err)
 	}
@@ -150,6 +161,7 @@ func (s *Server) setupRouter() *chi.Mux {
 	// Repos
 	r.Get("/repos", s.handleReposList)
 	r.Post("/repos/{id}/backup-toggle", s.handleRepoBackupToggle)
+	r.Post("/repos/{id}/purge", s.handleRepoPurge)
 	r.Post("/backup-checked", s.handleBackupChecked)
 	r.Post("/bulk/set-format", s.handleBulkSetFormat)
 	r.Post("/bulk/set-backup", s.handleBulkSetBackup)

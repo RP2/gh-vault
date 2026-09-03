@@ -19,6 +19,14 @@ import (
 	reposync "github.com/RP2/gh-vault/internal/sync"
 )
 
+// JobResult records the outcome of a job's most recent run. Results are kept
+// in memory: they describe the current process's activity and are not
+// persisted across restarts.
+type JobResult struct {
+	FinishedAt time.Time
+	Error      string
+}
+
 // Scheduler coordinates background cron jobs for gh-vault.
 type Scheduler interface {
 	Start() error
@@ -26,6 +34,7 @@ type Scheduler interface {
 	ReloadCron(expr string) error
 	NextRun(jobName string) time.Time
 	IsRunning(jobName string) bool
+	LastResult(jobName string) (JobResult, bool)
 }
 
 // CronScheduler implements Scheduler using robfig/cron/v3.
@@ -33,6 +42,7 @@ type CronScheduler struct {
 	cron     *cron.Cron
 	jobs     sync.Map
 	running  sync.Map
+	results  sync.Map
 	settings store.SettingsStore
 	syncer   reposync.Syncer
 	engine   backup.Engine
@@ -43,7 +53,7 @@ type CronScheduler struct {
 
 var _ Scheduler = (*CronScheduler)(nil)
 
-const defaultSyncSchedule = "0 3 1 * *"
+const defaultSyncSchedule = "0 23 * * *"
 
 // New creates a CronScheduler with the provided collaborators.
 func New(
@@ -99,6 +109,7 @@ func (s *CronScheduler) Stop() error {
 
 	s.jobs.Range(func(k, v any) bool { s.jobs.Delete(k); return true })
 	s.running.Range(func(k, v any) bool { s.running.Delete(k); return true })
+	s.results.Range(func(k, v any) bool { s.results.Delete(k); return true })
 	s.cron = nil
 
 	slog.Info("scheduler: stopped")
@@ -160,6 +171,17 @@ func (s *CronScheduler) IsRunning(jobName string) bool {
 	return ok && v == true
 }
 
+// LastResult reports the outcome of a job's most recent run in this process,
+// or false if the job has not run yet.
+func (s *CronScheduler) LastResult(jobName string) (JobResult, bool) {
+	v, ok := s.results.Load(jobName)
+	if !ok {
+		return JobResult{}, false
+	}
+	res, ok := v.(JobResult)
+	return res, ok
+}
+
 func (s *CronScheduler) syncSchedule() string {
 	schedule, err := s.settings.Get("cron_schedule")
 	if err != nil {
@@ -171,19 +193,23 @@ func (s *CronScheduler) syncSchedule() string {
 
 func (s *CronScheduler) addJobs(syncExpr string) error {
 	jobs := []struct {
-		name string
-		expr string
-		fn   func(ctx context.Context)
+		name    string
+		expr    string
+		timeout time.Duration
+		fn      func(ctx context.Context) error
 	}{
-		{name: "sync", expr: syncExpr, fn: s.syncJob},
-		{name: "backup", expr: "0 2 * * *", fn: s.backupJob},
-		{name: "verify", expr: "0 4 * * 0", fn: s.verifyJob},
-		{name: "log_cleanup", expr: "0 5 * * *", fn: s.logCleanupJob},
-		{name: "session_cleanup", expr: "*/10 * * * *", fn: s.sessionCleanupJob},
+		// Backup and verify run over every repo and do real disk work; on a
+		// large or slow (spinning-disk) collection they can take far longer
+		// than the metadata-only jobs.
+		{name: "sync", expr: syncExpr, timeout: 10 * time.Minute, fn: s.syncJob},
+		{name: "backup", expr: "30 23 * * *", timeout: 6 * time.Hour, fn: s.backupJob},
+		{name: "verify", expr: "0 4 * * 0", timeout: 2 * time.Hour, fn: s.verifyJob},
+		{name: "log_cleanup", expr: "0 5 * * *", timeout: 10 * time.Minute, fn: s.logCleanupJob},
+		{name: "session_cleanup", expr: "45 4 * * *", timeout: 10 * time.Minute, fn: s.sessionCleanupJob},
 	}
 
 	for _, j := range jobs {
-		id, err := s.cron.AddFunc(j.expr, s.wrapJob(j.name, j.fn))
+		id, err := s.cron.AddFunc(j.expr, s.wrapJob(j.name, j.timeout, j.fn))
 		if err != nil {
 			return fmt.Errorf("scheduler: add job %q: %w", j.name, err)
 		}
@@ -192,7 +218,7 @@ func (s *CronScheduler) addJobs(syncExpr string) error {
 	return nil
 }
 
-func (s *CronScheduler) wrapJob(name string, fn func(ctx context.Context)) func() {
+func (s *CronScheduler) wrapJob(name string, timeout time.Duration, fn func(ctx context.Context) error) func() {
 	return func() {
 		if _, loaded := s.running.LoadOrStore(name, true); loaded {
 			slog.Warn("scheduler: job already running, skipping", "job", name)
@@ -200,24 +226,29 @@ func (s *CronScheduler) wrapJob(name string, fn func(ctx context.Context)) func(
 		}
 		defer s.running.Delete(name)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
-		fn(ctx)
+		err := fn(ctx)
+		result := JobResult{FinishedAt: time.Now()}
+		if err != nil {
+			result.Error = err.Error()
+		}
+		s.results.Store(name, result)
 	}
 }
 
-func (s *CronScheduler) syncJob(ctx context.Context) {
+func (s *CronScheduler) syncJob(ctx context.Context) error {
 	if !s.syncer.TryLock() {
 		slog.Warn("scheduler: sync already in progress, skipping")
-		return
+		return nil
 	}
 	defer s.syncer.Unlock()
 
 	result, err := s.syncer.SyncRepos(ctx)
 	if err != nil {
 		slog.Error("scheduler: sync job failed", "error", err)
-		return
+		return err
 	}
 	slog.Info("scheduler: sync job completed",
 		"added", result.Added,
@@ -228,13 +259,17 @@ func (s *CronScheduler) syncJob(ctx context.Context) {
 		"unchanged", result.Unchanged,
 		"errors", result.ErrorCount,
 	)
+	if result.ErrorCount > 0 {
+		return fmt.Errorf("%d repo updates failed during sync", result.ErrorCount)
+	}
+	return nil
 }
 
-func (s *CronScheduler) backupJob(ctx context.Context) {
+func (s *CronScheduler) backupJob(ctx context.Context) error {
 	repos, err := s.repos.List()
 	if err != nil {
 		slog.Error("scheduler: backup job: list repos", "error", err)
-		return
+		return err
 	}
 
 	var active []model.Repo
@@ -277,7 +312,7 @@ func (s *CronScheduler) backupJob(ctx context.Context) {
 					return err
 				}
 			}
-			now := time.Now()
+			now := time.Now().UTC()
 			if err := s.repos.SetLastBackup(r.ID, &now); err != nil {
 				slog.Error("cron backup: set last_backup", "repo", r.Name, "error", err)
 			}
@@ -288,13 +323,17 @@ func (s *CronScheduler) backupJob(ctx context.Context) {
 		slog.Error("scheduler: backup job failed", "error", err)
 	}
 	slog.Info("scheduler: backup job completed", "repos", len(active), "failed", failed)
+	if failed > 0 {
+		return fmt.Errorf("%d of %d repos failed to back up", failed, len(active))
+	}
+	return nil
 }
 
-func (s *CronScheduler) verifyJob(ctx context.Context) {
+func (s *CronScheduler) verifyJob(ctx context.Context) error {
 	repos, err := s.repos.List()
 	if err != nil {
 		slog.Error("scheduler: verify job: list repos", "error", err)
-		return
+		return err
 	}
 
 	var failed int
@@ -308,39 +347,47 @@ func (s *CronScheduler) verifyJob(ctx context.Context) {
 		}
 	}
 	slog.Info("scheduler: verify job completed", "repos", len(repos), "failed", failed)
+	if failed > 0 {
+		return fmt.Errorf("%d repos failed verification", failed)
+	}
+	return nil
 }
 
-func (s *CronScheduler) logCleanupJob(ctx context.Context) {
+func (s *CronScheduler) logCleanupJob(ctx context.Context) error {
 	daysStr, err := s.settings.Get("log_retention_days")
 	if err != nil {
 		slog.Error("scheduler: log cleanup job: get retention days", "error", err)
-		return
+		return err
 	}
 
 	days, err := strconv.Atoi(daysStr)
 	if err != nil {
 		slog.Error("scheduler: log cleanup job: parse retention days", "value", daysStr, "error", err)
-		return
+		return err
 	}
 	if days <= 0 {
 		slog.Info("scheduler: log cleanup job disabled", "retention_days", days)
-		return
+		return nil
 	}
 
 	cutoff := time.Now().AddDate(0, 0, -days)
 	deleted, err := s.logs.DeleteOlderThan(cutoff)
 	if err != nil {
 		slog.Error("scheduler: log cleanup job: delete old logs", "error", err)
-		return
+		return err
 	}
 	slog.Info("scheduler: log cleanup job completed", "deleted", deleted, "cutoff", cutoff)
+	return nil
 }
 
-func (s *CronScheduler) sessionCleanupJob(ctx context.Context) {
+func (s *CronScheduler) sessionCleanupJob(ctx context.Context) error {
 	deleted, err := s.sessions.DeleteExpired()
 	if err != nil {
 		slog.Error("scheduler: session cleanup job failed", "error", err)
-		return
+		return err
 	}
-	slog.Info("scheduler: session cleanup job completed", "deleted", deleted)
+	if deleted > 0 {
+		slog.Info("scheduler: session cleanup job completed", "deleted", deleted)
+	}
+	return nil
 }

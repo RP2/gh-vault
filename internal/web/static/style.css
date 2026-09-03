@@ -508,3 +508,21 @@ section {
     border: 1px solid #000;
   }
 }
+
+.job-status {
+  color: var(--muted);
+}
+
+.job-status .job-error {
+  color: var(--danger);
+}
+
+.btn-danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.btn-danger:hover {
+  background: var(--danger);
+  color: var(--bg);
+}

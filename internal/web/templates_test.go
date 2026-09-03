@@ -10,7 +10,7 @@ import (
 )
 
 func TestTemplatesRender(t *testing.T) {
-	base, err := template.ParseFS(templateFS, "templates/layout.html")
+	base, err := template.New("layout.html").Funcs(templateFuncs).ParseFS(templateFS, "templates/layout.html")
 	if err != nil {
 		t.Fatalf("parse layout: %v", err)
 	}
@@ -21,11 +21,13 @@ func TestTemplatesRender(t *testing.T) {
 			BackedUp    int
 			NotBackedUp int
 			RecentLogs  []model.LogEntry
+			LastSync    jobStatusView
+			LastBackup  jobStatusView
 			CSRFToken   string
 			CurrentPath string
 		}{RepoCount: 5, BackedUp: 3, NotBackedUp: 2, RecentLogs: []model.LogEntry{
 			{ID: 1, RepoID: 1, Action: "backup", Status: "success", Message: "ok", CreatedAt: time.Now()},
-		}, CSRFToken: "abc", CurrentPath: "/"},
+		}, LastSync: jobStatusView{HasRun: true, FinishedAt: time.Now()}, CSRFToken: "abc", CurrentPath: "/"},
 		"repos.html": struct {
 			CSRFToken    string
 			Repos        []model.Repo

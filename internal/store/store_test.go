@@ -155,8 +155,8 @@ func TestSettingsGetAllDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get all settings: %v", err)
 	}
-	if settings.CronSchedule != "0 3 1 * *" {
-		t.Errorf("CronSchedule = %q, want %q", settings.CronSchedule, "0 3 1 * *")
+	if settings.CronSchedule != "0 23 * * *" {
+		t.Errorf("CronSchedule = %q, want %q", settings.CronSchedule, "0 23 * * *")
 	}
 	if settings.LogRetentionDays != 90 {
 		t.Errorf("LogRetentionDays = %d, want %d", settings.LogRetentionDays, 90)

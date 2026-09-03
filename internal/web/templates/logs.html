@@ -15,7 +15,7 @@
             <tbody>
                 {{range .Logs}}
                 <tr>
-                    <td>{{.CreatedAt.Format "2006-01-02 15:04:05"}}</td>
+                    <td>{{fmtDateTimeSec .CreatedAt}}</td>
                     <td>{{if .RepoOwner}}{{.RepoOwner}}/{{.RepoName}}{{else}}—{{end}}</td>
                     <td>{{.Action}}</td>
                     <td>

@@ -1,6 +1,11 @@
 {{define "content"}}
 <section>
   <p>{{.RepoCount}} repositories · {{.BackedUp}} copied to disk · {{.NotBackedUp}} not yet copied</p>
+  <p class="job-status">
+    Last sync: {{if .LastSync.Running}}running…{{else if .LastSync.HasRun}}{{fmtDateTime .LastSync.FinishedAt}}{{if .LastSync.Error}} — <span class="job-error">{{.LastSync.Error}}</span>{{end}}{{else}}no run yet{{end}}
+    ·
+    Last backup: {{if .LastBackup.Running}}running…{{else if .LastBackup.HasRun}}{{fmtDateTime .LastBackup.FinishedAt}}{{if .LastBackup.Error}} — <span class="job-error">{{.LastBackup.Error}}</span>{{end}}{{else}}no run yet{{end}}
+  </p>
   <p>
     <button hx-post="/sync" hx-disabled-elt="this" title="Fetch latest repository list from GitHub">Refresh from GitHub</button>
     <button hx-post="/backup-all" title="Copy all enabled repositories to disk">Backup All</button>
@@ -13,7 +18,7 @@
     <tbody>
       {{range .RecentLogs}}
       <tr>
-        <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+        <td>{{fmtDateTime .CreatedAt}}</td>
         <td>{{.Action}}</td>
         <td>{{.Message}}</td>
       </tr>

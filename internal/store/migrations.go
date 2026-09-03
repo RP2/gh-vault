@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );
 
-INSERT OR IGNORE INTO settings(key, value) VALUES ('cron_schedule', '0 3 1 * *');
+INSERT OR IGNORE INTO settings(key, value) VALUES ('cron_schedule', '0 23 * * *');
 INSERT OR IGNORE INTO settings(key, value) VALUES ('log_retention_days', '90');
 `
 

@@ -30,6 +30,7 @@ type Engine interface {
 	SwitchToBundle(ctx context.Context, repo model.Repo) error
 	SwitchToClone(ctx context.Context, repo model.Repo) error
 	Verify(ctx context.Context, repo model.Repo) error
+	RemoveLocal(owner, name string) error
 }
 
 // BackupEngine implements Engine using the git CLI.
@@ -276,7 +277,7 @@ func (e *BackupEngine) SwitchToBundle(ctx context.Context, repo model.Repo) erro
 	if err := os.RemoveAll(source); err != nil {
 		return fmt.Errorf("backup: switch to bundle %s/%s step 5: %w", owner, name, err)
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	if err := e.repos.SetLastBackup(repo.ID, &now); err != nil {
 		slog.Error("switch: set last_backup", "repo", repo.Name, "error", err)
 	}
@@ -378,7 +379,7 @@ func (e *BackupEngine) SwitchToClone(ctx context.Context, repo model.Repo) error
 	if err := os.RemoveAll(bundlePath); err != nil {
 		return fmt.Errorf("backup: switch to clone %s/%s step 8: %w", owner, name, err)
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	if err := e.repos.SetLastBackup(repo.ID, &now); err != nil {
 		slog.Error("switch: set last_backup", "repo", repo.Name, "error", err)
 	}
@@ -408,12 +409,82 @@ func (e *BackupEngine) Verify(ctx context.Context, repo model.Repo) error {
 		}
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	if err := e.repos.SetVerified(repo.ID, &now); err != nil {
 		return fmt.Errorf("backup: verify %s/%s: set verified: %w", repo.Owner, repo.Name, err)
 	}
 	if err := e.repos.SetLastBackup(repo.ID, &now); err != nil {
 		return fmt.Errorf("backup: verify %s/%s: set last backup: %w", repo.Owner, repo.Name, err)
 	}
+	return nil
+}
+
+// MoveBackup renames an existing backup from oldOwner/oldName to
+// newOwner/newName after a GitHub rename or transfer, so the backup is not
+// orphaned at a stale path and the next backup does not re-clone from scratch.
+// For clones it also repoints the origin remote at the new repository, since
+// GitHub redirects for old names can break when a new repo takes the old name.
+// A missing source is not an error: nothing was backed up yet, and the next
+// backup will clone directly at the new path.
+func (e *BackupEngine) MoveBackup(ctx context.Context, oldOwner, oldName, newOwner, newName string, format model.RepoFormat) error {
+	var oldPath, newPath string
+	switch format {
+	case model.FormatBundle:
+		oldPath = e.archivedPath(oldOwner, oldName)
+		newPath = e.archivedPath(newOwner, newName)
+	case model.FormatClone:
+		oldPath = e.activePath(oldOwner, oldName)
+		newPath = e.activePath(newOwner, newName)
+	default:
+		return fmt.Errorf("backup: move %s/%s: unknown format %q", oldOwner, oldName, format)
+	}
+
+	if _, err := os.Stat(oldPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("backup: move %s/%s: stat %s: %w", oldOwner, oldName, oldPath, err)
+	}
+	if _, err := os.Stat(newPath); err == nil {
+		return fmt.Errorf("backup: move %s/%s: target %s already exists", oldOwner, oldName, newPath)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("backup: move %s/%s: stat %s: %w", oldOwner, oldName, newPath, err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(newPath), 0755); err != nil {
+		return fmt.Errorf("backup: move %s/%s: create dir: %w", oldOwner, oldName, err)
+	}
+	if err := os.Rename(oldPath, newPath); err != nil {
+		return fmt.Errorf("backup: move %s/%s: rename: %w", oldOwner, oldName, err)
+	}
+
+	if format == model.FormatClone {
+		url, err := e.authURL(ctx, newOwner, newName)
+		if err != nil {
+			return fmt.Errorf("backup: move %s/%s: %w", oldOwner, oldName, err)
+		}
+		if err := e.runGit(ctx, []string{"--git-dir=" + newPath, "remote", "set-url", "origin", url}, ""); err != nil {
+			return fmt.Errorf("backup: move %s/%s: set origin: %w", oldOwner, oldName, err)
+		}
+	}
+
+	slog.Info("backup: moved backup to renamed path", "old", oldOwner+"/"+oldName, "new", newOwner+"/"+newName)
+	return nil
+}
+
+// RemoveLocal deletes the local backup files for a repository. It removes both
+// the clone and bundle paths so leftovers from earlier format switches are
+// cleaned up as well. Missing paths are not an error.
+func (e *BackupEngine) RemoveLocal(owner, name string) error {
+	var firstErr error
+	for _, path := range []string{e.activePath(owner, name), e.archivedPath(owner, name)} {
+		if err := os.RemoveAll(path); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr != nil {
+		return fmt.Errorf("backup: remove local %s/%s: %w", owner, name, firstErr)
+	}
+	slog.Info("backup: removed local files", "owner", owner, "name", name)
 	return nil
 }

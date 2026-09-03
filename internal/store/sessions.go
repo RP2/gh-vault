@@ -33,7 +33,7 @@ const sessionDeleteSQL = "DELETE FROM sessions WHERE id = ?"
 
 const sessionDeleteAllForUserSQL = "DELETE FROM sessions WHERE user_id = ?"
 
-const sessionListForExpirySQL = "SELECT id, expires_at FROM sessions"
+const sessionDeleteExpiredSQL = "DELETE FROM sessions WHERE expires_at < ?"
 
 func newRandomToken() (string, error) {
 	b := make([]byte, 32)
@@ -112,39 +112,13 @@ func (s *sessionsStore) DeleteAllForUser(userID int64) error {
 }
 
 func (s *sessionsStore) DeleteExpired() (int64, error) {
-	rows, err := s.db.Query(sessionListForExpirySQL)
+	result, err := s.db.Exec(sessionDeleteExpiredSQL, time.Now().UTC())
 	if err != nil {
-		return 0, fmt.Errorf("store: list sessions for expiry: %w", err)
+		return 0, fmt.Errorf("store: delete expired sessions: %w", err)
 	}
-	defer rows.Close()
-
-	var expired []string
-	now := time.Now().UTC()
-	for rows.Next() {
-		var id string
-		var expires time.Time
-		if err := rows.Scan(&id, &expires); err != nil {
-			return 0, fmt.Errorf("store: scan session for expiry: %w", err)
-		}
-		if expires.Before(now) {
-			expired = append(expired, id)
-		}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("store: rows affected delete expired sessions: %w", err)
 	}
-	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("store: iterate sessions for expiry: %w", err)
-	}
-
-	var deleted int64
-	for _, id := range expired {
-		result, err := s.db.Exec(sessionDeleteSQL, id)
-		if err != nil {
-			return deleted, fmt.Errorf("store: delete expired session: %w", err)
-		}
-		n, err := result.RowsAffected()
-		if err != nil {
-			return deleted, fmt.Errorf("store: rows affected delete expired session: %w", err)
-		}
-		deleted += n
-	}
-	return deleted, nil
+	return n, nil
 }

@@ -328,11 +328,34 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"BackedUp":    backedUp,
 		"NotBackedUp": notCopied,
 		"RecentLogs":  logs,
+		"LastSync":    s.jobStatus("sync"),
+		"LastBackup":  s.jobStatus("backup"),
 		"CSRFToken":   s.csrfToken(r),
 		"CurrentPath": r.URL.Path,
 	}
 
 	s.renderTemplate(w, "dashboard", data)
+}
+
+// jobStatusView renders a job's most recent run for the dashboard banner.
+// Results come from the scheduler's in-memory state: after a restart no run
+// has happened yet.
+type jobStatusView struct {
+	Name       string
+	HasRun     bool
+	Running    bool
+	FinishedAt time.Time
+	Error      string
+}
+
+func (s *Server) jobStatus(name string) jobStatusView {
+	v := jobStatusView{Name: name, Running: s.sched.IsRunning(name)}
+	if res, ok := s.sched.LastResult(name); ok {
+		v.HasRun = true
+		v.FinishedAt = res.FinishedAt
+		v.Error = res.Error
+	}
+	return v
 }
 
 // Repos
@@ -403,6 +426,49 @@ func (s *Server) handleRepoBackupToggle(w http.ResponseWriter, r *http.Request) 
 		slog.Error("set backup enabled", "id", id, "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
+	}
+}
+
+// handleRepoPurge deletes the local backup files of a repository that no
+// longer exists on GitHub. The GitHubDeleted check is the guard that keeps a
+// live repository's only copy from being removed through the UI.
+func (s *Server) handleRepoPurge(w http.ResponseWriter, r *http.Request) {
+	id, err := parseRepoID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	repo, err := s.repos.Get(id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		slog.Error("purge repo: lookup", "id", id, "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if !repo.GitHubDeleted {
+		http.Error(w, "refusing to purge: repository still exists on GitHub", http.StatusConflict)
+		return
+	}
+
+	if err := s.engine.RemoveLocal(repo.Owner, repo.Name); err != nil {
+		slog.Error("purge repo: remove local files", "owner", repo.Owner, "name", repo.Name, "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if err := s.repos.SetBackupEnabled(id, false); err != nil {
+		slog.Error("purge repo: disable backup", "id", id, "error", err)
+	}
+	if err := s.logs.Create(model.LogEntry{
+		RepoID:  repo.ID,
+		Action:  "backup.purged",
+		Status:  "success",
+		Message: fmt.Sprintf("removed local copy of %s/%s", repo.Owner, repo.Name),
+	}); err != nil {
+		slog.Error("purge repo: create log entry", "error", err)
 	}
 }
 
@@ -607,7 +673,7 @@ func (s *Server) handleBackupChecked(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			now := time.Now()
+			now := time.Now().UTC()
 			if err := s.repos.SetLastBackup(r.ID, &now); err != nil {
 				slog.Error("set last backup", "id", r.ID, "error", err)
 			}
@@ -719,7 +785,7 @@ func (s *Server) handleTriggerBackup(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 			}
-			now := time.Now()
+			now := time.Now().UTC()
 			if err := s.repos.SetLastBackup(repo.ID, &now); err != nil {
 				slog.Error("set last backup", "id", repo.ID, "error", err)
 			}
