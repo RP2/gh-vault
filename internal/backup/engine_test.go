@@ -13,6 +13,19 @@ import (
 	"github.com/RP2/gh-vault/internal/store"
 )
 
+// TestMain isolates git from the developer's own config: a local
+// init.defaultBranch, template directory or hooks path would otherwise change
+// what these tests see and hide failures that only appear on CI.
+func TestMain(m *testing.M) {
+	if err := os.Setenv("GIT_CONFIG_GLOBAL", os.DevNull); err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("GIT_CONFIG_SYSTEM", os.DevNull); err != nil {
+		panic(err)
+	}
+	os.Exit(m.Run())
+}
+
 // newReconcileTestEngine builds an engine over a real SQLite store and an
 // empty backup directory. The token provider is nil: Reconcile never touches
 // credentials.
@@ -555,16 +568,19 @@ func TestFetchOriginCopiesLatestRefs(t *testing.T) {
 		t.Fatalf("fetch origin: %v", err)
 	}
 
-	fetched, err := engine.gitOutput(ctx, []string{"--git-dir=" + local, "rev-parse", "refs/heads/main"}, "")
+	// Compare HEAD commits rather than a branch name: `git init` picks the
+	// default branch from the environment's config, which differs between a
+	// developer machine and a CI runner.
+	fetched, err := engine.gitOutput(ctx, []string{"--git-dir=" + local, "rev-parse", "HEAD"}, "")
 	if err != nil {
-		t.Fatalf("read fetched ref: %v", err)
+		t.Fatalf("read fetched HEAD: %v", err)
 	}
-	want, err := engine.gitOutput(ctx, []string{"-C", work, "rev-parse", "refs/heads/main"}, "")
+	want, err := engine.gitOutput(ctx, []string{"-C", work, "rev-parse", "HEAD"}, "")
 	if err != nil {
-		t.Fatalf("read work ref: %v", err)
+		t.Fatalf("read work HEAD: %v", err)
 	}
 	if fetched != want {
-		t.Errorf("fetched main = %s, want %s", fetched, want)
+		t.Errorf("fetched HEAD = %s, want %s", fetched, want)
 	}
 
 	origin, err := engine.gitOutput(ctx, []string{"--git-dir=" + local, "remote", "get-url", "origin"}, "")
