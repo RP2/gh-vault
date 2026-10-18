@@ -827,12 +827,47 @@ func (e *BackupEngine) scrubStoredToken(ctx context.Context, repo model.Repo) {
 	slog.Info("backup: removed stored credential from clone config", "owner", repo.Owner, "name", repo.Name)
 }
 
+// removeRedundantClone deletes a bare clone left next to a bundle by an earlier
+// version. A bundle-format repo keeps one copy, so the clone is only removed
+// after the bundle passes verification: a bad bundle must never become the sole
+// surviving copy.
+func (e *BackupEngine) removeRedundantClone(ctx context.Context, repo model.Repo) {
+	if repo.Format != model.FormatBundle {
+		return
+	}
+
+	clone := e.activePath(repo.Owner, repo.Name)
+	info, err := os.Stat(clone)
+	if err != nil || !info.IsDir() {
+		return
+	}
+
+	bundlePath := e.archivedPath(repo.Owner, repo.Name)
+	bundleInfo, err := os.Stat(bundlePath)
+	if err != nil || bundleInfo.IsDir() || bundleInfo.Size() == 0 {
+		// No usable bundle: the clone may be the only copy.
+		return
+	}
+
+	if err := e.verifyBundle(ctx, bundlePath); err != nil {
+		slog.Warn("backup: keeping redundant clone, bundle failed verification", "owner", repo.Owner, "name", repo.Name, "error", err)
+		return
+	}
+
+	if err := os.RemoveAll(clone); err != nil {
+		slog.Warn("backup: remove redundant clone failed", "owner", repo.Owner, "name", repo.Name, "error", err)
+		return
+	}
+	slog.Info("backup: removed redundant clone for bundle repo", "owner", repo.Owner, "name", repo.Name)
+}
+
 // Reconcile resets stored backup state for repos whose backup files are
 // missing from disk — e.g. after a dataset restore, manual deletion, or disk
-// loss. It deletes nothing and clones nothing: the next backup run re-creates
-// missing copies (Backup always copies when the file is absent), and the
-// dashboard reflects the true on-disk state in the meantime instead of stale
-// dates. It also scrubs credentials left in clone configs by earlier versions.
+// loss. It clones nothing: the next backup run re-creates missing copies
+// (Backup always copies when the file is absent), and the dashboard reflects
+// the true on-disk state in the meantime instead of stale dates. It also
+// scrubs credentials left in clone configs by earlier versions and deletes
+// clones that a verified bundle has made redundant.
 func (e *BackupEngine) Reconcile(ctx context.Context) error {
 	repos, err := e.repos.List()
 	if err != nil {
@@ -845,8 +880,10 @@ func (e *BackupEngine) Reconcile(ctx context.Context) error {
 			return err
 		}
 
-		// Independent of backups: make sure no clone keeps a token in its
-		// config, even for repos that are skipped every night.
+		// Independent of backups: drop a clone that a verified bundle has made
+		// redundant, then make sure no clone keeps a token in its config, even
+		// for repos that are skipped every night.
+		e.removeRedundantClone(ctx, repo)
 		e.scrubStoredToken(ctx, repo)
 
 		// Only rows that claim a copy exists need checking; repos never backed

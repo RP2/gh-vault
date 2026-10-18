@@ -300,6 +300,58 @@ func TestBackupRebuildsIncompleteCopy(t *testing.T) {
 	}
 }
 
+// TestReconcileRemovesRedundantClone covers the upgrade cleanup: a bundle repo
+// that an earlier version left with both copies keeps only the verified bundle.
+func TestReconcileRemovesRedundantClone(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	engine, db := newReconcileTestEngine(t)
+	repo, _ := newBundleTestRepo(t, engine, db)
+	now := time.Now()
+	if err := db.Repos().SetLastBackup(repo.ID, &now); err != nil {
+		t.Fatalf("set last backup: %v", err)
+	}
+
+	if err := engine.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if _, err := os.Stat(engine.activePath("RP2", "bundled")); !os.IsNotExist(err) {
+		t.Errorf("redundant clone still present (stat err = %v)", err)
+	}
+	if _, err := os.Stat(engine.archivedPath("RP2", "bundled")); err != nil {
+		t.Errorf("bundle missing after cleanup: %v", err)
+	}
+}
+
+// TestReconcileKeepsCloneWhenBundleIsBroken is the safety side of that
+// cleanup: a bundle that does not verify must not become the only copy.
+func TestReconcileKeepsCloneWhenBundleIsBroken(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	engine, db := newReconcileTestEngine(t)
+	repo, bundle := newBundleTestRepo(t, engine, db)
+	now := time.Now()
+	if err := db.Repos().SetLastBackup(repo.ID, &now); err != nil {
+		t.Fatalf("set last backup: %v", err)
+	}
+	if err := os.Truncate(bundle, 8); err != nil {
+		t.Fatalf("truncate bundle: %v", err)
+	}
+
+	if err := engine.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if _, err := os.Stat(engine.activePath("RP2", "bundled")); err != nil {
+		t.Errorf("clone removed although the bundle does not verify: %v", err)
+	}
+}
+
 // TestReconcileScrubsStoredToken covers upgrade hygiene: clone configs written
 // by an earlier version carried the token, and idle repos never fetch, so the
 // scrub cannot wait for a copy to happen.
