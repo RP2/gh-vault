@@ -116,6 +116,8 @@ ENV TZ=America/New_York
 
 Keep these on separate datasets. This lets you snapshot and retain them independently.
 
+The monthly verify job unpacks bundles into `/backups/.verify/` while it checks them, so the volume needs free space roughly equal to the largest repository. The directory is cleaned up per repository and is empty between runs.
+
 ## Backup Formats
 
 **Bare clone** (`active/owner/name.git`): A full mirror of the repo. Supports incremental `fetch`. This is the default for new repos.
@@ -178,7 +180,7 @@ All times are container-local. Set `TZ` to your timezone so schedules and timest
 | sync | Configurable (default: daily 23:00) | Fetches repo list from GitHub. Detects new, renamed, transferred, and deleted repos. |
 | backup | Daily at 23:30 | Copies repos whose recorded `pushed_at` changed. Up to 3 concurrent. |
 | backup_sweep | Weekly (Sunday 03:00) | Compares refs against GitHub for every repo, catching changes `pushed_at` misses. |
-| verify | Weekly (Sunday 04:00) | Runs `git fsck` on clones and `git bundle verify` on bundles. |
+| verify | Monthly (1st, 04:00) | Deep-reads every backup: `git fsck` on clones, and bundles are unpacked into a scratch repo and fsck'd. Skipped with a warning when free space is short. |
 | log_cleanup | Daily at 05:00 | Deletes logs older than your retention setting. |
 | session_cleanup | Daily at 04:45 | Deletes expired sessions. |
 

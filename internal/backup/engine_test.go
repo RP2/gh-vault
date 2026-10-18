@@ -252,6 +252,88 @@ func TestBackupSkipsUnchangedCopy(t *testing.T) {
 	}
 }
 
+// TestVerifyBundleDetectsTruncatedPack covers the gap the header check leaves:
+// a bundle cut mid-pack still passes `git bundle verify` but cannot be
+// restored, and must fail verification.
+func TestVerifyBundleDetectsTruncatedPack(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	engine, db := newReconcileTestEngine(t)
+	repo, bundle := newBundleTestRepo(t, engine, db)
+
+	info, err := os.Stat(bundle)
+	if err != nil {
+		t.Fatalf("stat bundle: %v", err)
+	}
+	if err := os.Truncate(bundle, info.Size()*6/10); err != nil {
+		t.Fatalf("truncate bundle: %v", err)
+	}
+
+	if err := engine.Verify(context.Background(), repo); err == nil {
+		t.Error("verify of a bundle truncated mid-pack succeeded, want failure")
+	}
+}
+
+func TestVerifyBundleDeepRecordsSuccess(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	engine, db := newReconcileTestEngine(t)
+	repo, _ := newBundleTestRepo(t, engine, db)
+
+	if err := engine.Verify(context.Background(), repo); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+
+	stored, err := db.Repos().Get(repo.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if stored.VerifiedAt == nil {
+		t.Error("VerifiedAt = nil, want set after a deep verification")
+	}
+
+	scratch := filepath.Join(engine.backupDir, ".verify")
+	entries, err := os.ReadDir(scratch)
+	if err != nil {
+		t.Fatalf("read scratch dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("scratch dir left behind: %v", entries)
+	}
+}
+
+// TestVerifyBundleSkipsWithoutSpace keeps a full volume from being reported as
+// a failed backup, and leaves the copy unverified so the dashboard does not
+// claim otherwise.
+func TestVerifyBundleSkipsWithoutSpace(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	engine, db := newReconcileTestEngine(t)
+	repo, _ := newBundleTestRepo(t, engine, db)
+
+	original := freeBytes
+	freeBytes = func(string) (uint64, error) { return 1, nil }
+	defer func() { freeBytes = original }()
+
+	if err := engine.Verify(context.Background(), repo); err != nil {
+		t.Fatalf("verify without space = %v, want a skip", err)
+	}
+
+	stored, err := db.Repos().Get(repo.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if stored.VerifiedAt != nil {
+		t.Error("VerifiedAt set although verification was skipped")
+	}
+}
+
 // noTokenProvider supplies no credentials, so any path that needs GitHub fails
 // fast instead of reaching the network.
 type noTokenProvider struct{}

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/RP2/gh-vault/internal/github"
@@ -702,7 +703,78 @@ func (e *BackupEngine) verifyBundle(ctx context.Context, path string) error {
 	return nil
 }
 
+// errVerifySkipped reports that a deep verification was skipped for a reason
+// outside the repository's control, such as a full volume. The copy stays
+// unverified, but the run is not a failure.
+var errVerifySkipped = errors.New("verification skipped")
+
+// freeBytes reports the free space on the filesystem holding path. It is a
+// variable so tests can simulate a full volume.
+var freeBytes = func(path string) (uint64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return 0, err
+	}
+	return st.Bavail * uint64(st.Bsize), nil
+}
+
+// verifyBundleDeep unpacks a bundle into a scratch repository on the backup
+// volume and checks every object. `git bundle verify` reads only the header and
+// the prerequisite list, so a bundle truncated mid-pack passes it and cannot be
+// restored. The unpack needs roughly the packed size of the repository, so a
+// volume without room skips the check rather than reporting a failure.
+func (e *BackupEngine) verifyBundleDeep(ctx context.Context, path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat bundle: %w", err)
+	}
+	if info.IsDir() || info.Size() == 0 {
+		return fmt.Errorf("not a readable bundle")
+	}
+
+	root := filepath.Join(e.backupDir, ".verify")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return fmt.Errorf("create scratch dir: %w", err)
+	}
+
+	need := uint64(info.Size()) + uint64(info.Size())/4
+	free, err := freeBytes(root)
+	if err != nil {
+		return fmt.Errorf("read free space: %w", err)
+	}
+	if free < need {
+		slog.Warn("backup: skipping deep bundle verification, not enough free space",
+			"path", path, "need_bytes", need, "free_bytes", free)
+		return errVerifySkipped
+	}
+
+	scratch, err := os.MkdirTemp(root, "unpack-")
+	if err != nil {
+		return fmt.Errorf("create scratch repo: %w", err)
+	}
+	defer func() {
+		if err := os.RemoveAll(scratch); err != nil {
+			slog.Warn("backup: remove scratch repo", "path", scratch, "error", err)
+		}
+	}()
+
+	if err := e.runGit(ctx, []string{"init", "--bare", "--quiet", scratch}, ""); err != nil {
+		return fmt.Errorf("init scratch repo: %w", err)
+	}
+	// Fetch every ref the bundle carries, then walk the objects: a truncated
+	// pack fails here even though the cheap header check passes.
+	if err := e.runGit(ctx, []string{"--git-dir=" + scratch, "fetch", path, "+refs/*:refs/verify/*"}, ""); err != nil {
+		return fmt.Errorf("unpack: %w", err)
+	}
+	if err := e.runGit(ctx, []string{"--git-dir=" + scratch, "fsck", "--no-dangling"}, ""); err != nil {
+		return fmt.Errorf("fsck: %w", err)
+	}
+	return nil
+}
+
 // Verify checks the integrity of a clone or bundle and records the timestamp.
+// Clones are fsck'd in place; bundles are unpacked and fsck'd through
+// verifyBundleDeep, because the header check alone cannot see a damaged pack.
 func (e *BackupEngine) Verify(ctx context.Context, repo model.Repo) error {
 	var path string
 	switch repo.Format {
@@ -720,7 +792,10 @@ func (e *BackupEngine) Verify(ctx context.Context, repo model.Repo) error {
 			return fmt.Errorf("backup: verify %s/%s: %w", repo.Owner, repo.Name, err)
 		}
 	case model.FormatBundle:
-		if err := e.verifyBundle(ctx, path); err != nil {
+		if err := e.verifyBundleDeep(ctx, path); err != nil {
+			if errors.Is(err, errVerifySkipped) {
+				return nil
+			}
 			return fmt.Errorf("backup: verify %s/%s: %w", repo.Owner, repo.Name, err)
 		}
 	}

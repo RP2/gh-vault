@@ -225,7 +225,10 @@ func (s *CronScheduler) addJobs(syncExpr string) error {
 		{name: "backup_sweep", expr: "0 3 * * 0", timeout: 6 * time.Hour, fn: func(ctx context.Context) error {
 			return s.backupJob(ctx, backup.BackupVerifyRefs)
 		}},
-		{name: "verify", expr: "0 4 * * 0", timeout: 2 * time.Hour, fn: s.verifyJob},
+		// Monthly deep read of every copy: clones are fsck'd in place, bundles
+		// are unpacked into a scratch repo and fsck'd. This is the bit-rot
+		// pass, not a freshness check, so it does not need a weekly cadence.
+		{name: "verify", expr: "0 4 1 * *", timeout: 12 * time.Hour, fn: s.verifyJob},
 		{name: "log_cleanup", expr: "0 5 * * *", timeout: 10 * time.Minute, fn: s.logCleanupJob},
 		{name: "session_cleanup", expr: "45 4 * * *", timeout: 10 * time.Minute, fn: s.sessionCleanupJob},
 	}
