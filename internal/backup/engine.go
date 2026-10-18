@@ -269,8 +269,8 @@ func (e *BackupEngine) SwitchToBundle(ctx context.Context, repo model.Repo) erro
 		return fmt.Errorf("backup: switch to bundle %s/%s step 1: %w", owner, name, err)
 	}
 
-	// Step 2: verify the bundle (must run inside the source repo).
-	if err := e.runGit(ctx, []string{"bundle", "verify", temp}, source); err != nil {
+	// Step 2: verify the bundle stands alone before the clone is removed.
+	if err := e.verifyBundle(ctx, temp); err != nil {
 		return fmt.Errorf("backup: switch to bundle %s/%s step 2: %w", owner, name, err)
 	}
 
@@ -401,6 +401,31 @@ func (e *BackupEngine) SwitchToClone(ctx context.Context, repo model.Repo) error
 	return nil
 }
 
+// verifyBundle checks that a bundle file is readable and self-contained.
+// git resolves bundle prerequisites against a repository, so the check runs
+// inside a throwaway empty bare repo. gh-vault writes bundles with --all from a
+// complete bare clone, so a valid bundle needs no objects to verify; a bundle
+// that depends on prerequisites would restore only partially, and fails here.
+func (e *BackupEngine) verifyBundle(ctx context.Context, path string) error {
+	tmp, err := os.MkdirTemp("", "gh-vault-verify-")
+	if err != nil {
+		return fmt.Errorf("create temp dir: %w", err)
+	}
+	defer func() {
+		if err := os.RemoveAll(tmp); err != nil {
+			slog.Warn("backup: remove temp verify dir", "path", tmp, "error", err)
+		}
+	}()
+
+	if err := e.runGit(ctx, []string{"init", "--bare", "--quiet", tmp}, ""); err != nil {
+		return fmt.Errorf("init temp repo: %w", err)
+	}
+	if err := e.runGit(ctx, []string{"bundle", "verify", path}, tmp); err != nil {
+		return fmt.Errorf("bundle verify: %w", err)
+	}
+	return nil
+}
+
 // Verify checks the integrity of a clone or bundle and records the timestamp.
 func (e *BackupEngine) Verify(ctx context.Context, repo model.Repo) error {
 	var path string
@@ -419,7 +444,7 @@ func (e *BackupEngine) Verify(ctx context.Context, repo model.Repo) error {
 			return fmt.Errorf("backup: verify %s/%s: %w", repo.Owner, repo.Name, err)
 		}
 	case model.FormatBundle:
-		if err := e.runGit(ctx, []string{"bundle", "verify", path}, ""); err != nil {
+		if err := e.verifyBundle(ctx, path); err != nil {
 			return fmt.Errorf("backup: verify %s/%s: %w", repo.Owner, repo.Name, err)
 		}
 	}
