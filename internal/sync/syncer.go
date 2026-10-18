@@ -359,6 +359,10 @@ func (s *SyncerImpl) addNewRepo(ghRepo *gh.Repository, result *SyncResult) error
 		LastPush:       metadata.lastPush,
 		GitHubArchived: metadata.archived,
 		Private:        metadata.private,
+		// New repos are typically active work, so copy them as bare clones
+		// without a manual step. The format toggle in the UI is the only
+		// per-repo choice left; enabling exists for excluding a repo later.
+		BackupEnabled: true,
 	}
 
 	id, err := s.repos.Upsert(newRepo)

@@ -163,7 +163,7 @@ The certificate files live at `{DATA_DIR}/tls/cert.pem` and `{DATA_DIR}/tls/key.
 
 Sync calls the GitHub API to reconcile your local repo list. It adds new repos, detects renames and transfers, and marks deleted repos. It does not download git data.
 
-Backup runs `git clone` or `git fetch` to download repository contents. It runs on all repos with backup enabled.
+Backup runs `git clone` or `git fetch` to download repository contents. It runs on all repos with backup enabled. Repos added by sync are enabled as bare clones automatically, so only an explicit choice is needed: switch a repo to bundle format, or disable it to keep it out of backups.
 
 All times are container-local. Set `TZ` to your timezone so schedules and timestamps match your clock; without it everything runs on UTC.
 
