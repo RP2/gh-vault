@@ -116,7 +116,7 @@ ENV TZ=America/New_York
 
 Keep these on separate datasets. This lets you snapshot and retain them independently.
 
-The monthly verify job unpacks bundles into `/backups/.verify/` while it checks them, so the volume needs free space roughly equal to the largest repository. The directory is cleaned up per repository and is empty between runs.
+The verify job uses `/backups/.verify/` as scratch space: the container root filesystem is read-only and `/tmp` may not be mounted, so nothing relies on it. The directory is emptied after each check and needs free space roughly equal to the largest repository during the monthly deep read.
 
 ## Backup Formats
 

@@ -347,6 +347,43 @@ func TestVerifyBundleSkipsWithoutSpace(t *testing.T) {
 	}
 }
 
+// TestVerificationAvoidsTempDir reproduces a hardened deployment: the container
+// root is read-only and /tmp is not mounted, so scratch space must come from the
+// backup volume.
+func TestVerificationAvoidsTempDir(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+
+	engine, db := newReconcileTestEngine(t)
+	repo, bundle := newBundleTestRepo(t, engine, db)
+
+	readonly := t.TempDir()
+	if err := os.Chmod(readonly, 0o500); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(readonly, 0o700) })
+	t.Setenv("TMPDIR", readonly)
+
+	if err := engine.verifyBundle(context.Background(), bundle); err != nil {
+		t.Fatalf("quick verify with a read-only TMPDIR: %v", err)
+	}
+	if err := engine.Verify(context.Background(), repo); err != nil {
+		t.Fatalf("deep verify with a read-only TMPDIR: %v", err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(engine.backupDir, ".verify"))
+	if err != nil {
+		t.Fatalf("read scratch dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("scratch dir left behind: %v", entries)
+	}
+}
+
 // noTokenProvider supplies no credentials, so any path that needs GitHub fails
 // fast instead of reaching the network.
 type noTokenProvider struct{}

@@ -678,26 +678,49 @@ func (e *BackupEngine) SwitchToClone(ctx context.Context, repo model.Repo) error
 	return nil
 }
 
+// verifyRoot is the scratch directory for verification. It lives on the backup
+// volume because the container root filesystem is read-only and /tmp may be
+// absent or unmounted; /backups is always writable.
+func (e *BackupEngine) verifyRoot() string {
+	return filepath.Join(e.backupDir, ".verify")
+}
+
+// scratchRepo creates an empty bare repository under verifyRoot and returns its
+// path with a cleanup function.
+func (e *BackupEngine) scratchRepo(ctx context.Context) (string, func(), error) {
+	root := e.verifyRoot()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return "", nil, fmt.Errorf("create scratch dir: %w", err)
+	}
+	path, err := os.MkdirTemp(root, "repo-")
+	if err != nil {
+		return "", nil, fmt.Errorf("create scratch repo: %w", err)
+	}
+	cleanup := func() {
+		if err := os.RemoveAll(path); err != nil {
+			slog.Warn("backup: remove scratch repo", "path", path, "error", err)
+		}
+	}
+	if err := e.runGit(ctx, []string{"init", "--bare", "--quiet", path}, ""); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("init scratch repo: %w", err)
+	}
+	return path, cleanup, nil
+}
+
 // verifyBundle checks that a bundle file is readable and self-contained.
 // git resolves bundle prerequisites against a repository, so the check runs
 // inside a throwaway empty bare repo. gh-vault writes bundles with --all from a
 // complete bare clone, so a valid bundle needs no objects to verify; a bundle
 // that depends on prerequisites would restore only partially, and fails here.
 func (e *BackupEngine) verifyBundle(ctx context.Context, path string) error {
-	tmp, err := os.MkdirTemp("", "gh-vault-verify-")
+	scratch, cleanup, err := e.scratchRepo(ctx)
 	if err != nil {
-		return fmt.Errorf("create temp dir: %w", err)
+		return err
 	}
-	defer func() {
-		if err := os.RemoveAll(tmp); err != nil {
-			slog.Warn("backup: remove temp verify dir", "path", tmp, "error", err)
-		}
-	}()
+	defer cleanup()
 
-	if err := e.runGit(ctx, []string{"init", "--bare", "--quiet", tmp}, ""); err != nil {
-		return fmt.Errorf("init temp repo: %w", err)
-	}
-	if err := e.runGit(ctx, []string{"bundle", "verify", path}, tmp); err != nil {
+	if err := e.runGit(ctx, []string{"bundle", "verify", path}, scratch); err != nil {
 		return fmt.Errorf("bundle verify: %w", err)
 	}
 	return nil
@@ -732,7 +755,7 @@ func (e *BackupEngine) verifyBundleDeep(ctx context.Context, path string) error 
 		return fmt.Errorf("not a readable bundle")
 	}
 
-	root := filepath.Join(e.backupDir, ".verify")
+	root := e.verifyRoot()
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return fmt.Errorf("create scratch dir: %w", err)
 	}
@@ -748,19 +771,12 @@ func (e *BackupEngine) verifyBundleDeep(ctx context.Context, path string) error 
 		return errVerifySkipped
 	}
 
-	scratch, err := os.MkdirTemp(root, "unpack-")
+	scratch, cleanup, err := e.scratchRepo(ctx)
 	if err != nil {
-		return fmt.Errorf("create scratch repo: %w", err)
+		return err
 	}
-	defer func() {
-		if err := os.RemoveAll(scratch); err != nil {
-			slog.Warn("backup: remove scratch repo", "path", scratch, "error", err)
-		}
-	}()
+	defer cleanup()
 
-	if err := e.runGit(ctx, []string{"init", "--bare", "--quiet", scratch}, ""); err != nil {
-		return fmt.Errorf("init scratch repo: %w", err)
-	}
 	// Fetch every ref the bundle carries, then walk the objects: a truncated
 	// pack fails here even though the cheap header check passes.
 	if err := e.runGit(ctx, []string{"--git-dir=" + scratch, "fetch", path, "+refs/*:refs/verify/*"}, ""); err != nil {
