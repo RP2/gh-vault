@@ -22,11 +22,25 @@ import (
 	syncpkg "github.com/RP2/gh-vault/internal/sync"
 )
 
+// BackupMode selects how hard a backup works to notice that a repository
+// changed. GitHub's pushed_at is the cheap signal; comparing refs is the
+// reliable one.
+type BackupMode int
+
+const (
+	// BackupIfChanged copies only when GitHub's pushed_at differs from the
+	// pushed_at the local copy represents. An idle repository costs no git
+	// work at all.
+	BackupIfChanged BackupMode = iota
+	// BackupVerifyRefs additionally asks the remote for its refs and copies
+	// when they differ from the local copy, catching pushes that leave
+	// pushed_at unchanged, such as tag-only pushes.
+	BackupVerifyRefs
+)
+
 // Engine performs backup operations on a repository.
 type Engine interface {
-	CloneRepo(ctx context.Context, repo model.Repo) error
-	FetchRepo(ctx context.Context, repo model.Repo) error
-	CreateBundle(ctx context.Context, repo model.Repo) error
+	Backup(ctx context.Context, repo model.Repo, mode BackupMode) (bool, error)
 	SwitchToBundle(ctx context.Context, repo model.Repo) error
 	SwitchToClone(ctx context.Context, repo model.Repo) error
 	Verify(ctx context.Context, repo model.Repo) error
@@ -67,7 +81,16 @@ func normalizeRemoteURL(s string) string {
 	return regexp.MustCompile(`://[^@]+@`).ReplaceAllString(s, "://")
 }
 
-// authURL returns an authenticated GitHub remote URL for the repository.
+// plainURL returns the credential-free remote URL for a repository. This is the
+// URL stored in a clone's config: git writes remote URLs verbatim, so storing
+// the token-bearing URL would leave a live token in plaintext in every clone.
+func plainURL(owner, name string) string {
+	return fmt.Sprintf("https://github.com/%s/%s.git", owner, name)
+}
+
+// authURL returns an authenticated GitHub remote URL for the repository. It is
+// passed to git per invocation and never stored, so the token stays out of
+// clone configs on the backup volume.
 func (e *BackupEngine) authURL(ctx context.Context, owner, name string) (string, error) {
 	token, err := e.tokenProvider.GetToken(ctx)
 	if err != nil {
@@ -77,6 +100,105 @@ func (e *BackupEngine) authURL(ctx context.Context, owner, name string) (string,
 		return "", errors.New("backup: token not configured")
 	}
 	return fmt.Sprintf("https://x-access-token:%s@github.com/%s/%s.git", token, owner, name), nil
+}
+
+// ensureOrigin points a clone's origin remote at the credential-free URL,
+// scrubbing any token an earlier version stored there. The authenticated URL is
+// supplied per git invocation instead; see fetchOrigin.
+func (e *BackupEngine) ensureOrigin(ctx context.Context, gitDir, owner, name string) error {
+	want := plainURL(owner, name)
+
+	out, err := e.gitOutput(ctx, []string{"--git-dir=" + gitDir, "remote"}, "")
+	if err != nil {
+		return fmt.Errorf("list remotes: %w", err)
+	}
+	hasOrigin := false
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "origin" {
+			hasOrigin = true
+			break
+		}
+	}
+	if !hasOrigin {
+		if err := e.runGit(ctx, []string{"--git-dir=" + gitDir, "remote", "add", "origin", want}, ""); err != nil {
+			return fmt.Errorf("add origin: %w", err)
+		}
+		return nil
+	}
+
+	current, err := e.gitOutput(ctx, []string{"--git-dir=" + gitDir, "remote", "get-url", "origin"}, "")
+	if err != nil {
+		return fmt.Errorf("read origin: %w", err)
+	}
+	if strings.TrimSpace(current) == want {
+		return nil
+	}
+	if err := e.runGit(ctx, []string{"--git-dir=" + gitDir, "remote", "set-url", "origin", want}, ""); err != nil {
+		return fmt.Errorf("set origin: %w", err)
+	}
+	return nil
+}
+
+// fetchOrigin fetches with the authenticated URL for this invocation only, so
+// the token reaches git without being written to disk. The remote name is left
+// out on purpose: `git -c remote.origin.url=... fetch origin` does not override
+// the stored URL, so the URL and refspec are passed explicitly. The refspec
+// matches what a bare clone's origin uses, and --prune drops deleted branches;
+// tags are auto-followed as before.
+func (e *BackupEngine) fetchOrigin(ctx context.Context, gitDir, url string) error {
+	return e.runGit(ctx, []string{
+		"--git-dir=" + gitDir, "fetch", url,
+		"--prune", "+refs/heads/*:refs/heads/*",
+	}, "")
+}
+
+// ensureClone makes path a bare clone of the repository that is current with
+// GitHub, cloning it when absent and fetching it otherwise.
+func (e *BackupEngine) ensureClone(ctx context.Context, repo model.Repo, path string) error {
+	url, err := e.authURL(ctx, repo.Owner, repo.Name)
+	if err != nil {
+		return err
+	}
+
+	info, err := os.Stat(path)
+	if err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("target %s exists but is not a directory", path)
+		}
+		// Bare repos store HEAD directly in the directory; a missing HEAD means
+		// the directory is stale and should be recloned.
+		if _, err := os.Stat(filepath.Join(path, "HEAD")); err != nil {
+			if !os.IsNotExist(err) {
+				return fmt.Errorf("stat HEAD: %w", err)
+			}
+			slog.Warn("backup: clone missing HEAD, removing stale directory", "path", path)
+			if err := os.RemoveAll(path); err != nil {
+				return fmt.Errorf("remove stale clone: %w", err)
+			}
+			return e.cloneFresh(ctx, repo, path, url)
+		}
+		if err := e.ensureOrigin(ctx, path, repo.Owner, repo.Name); err != nil {
+			return err
+		}
+		if err := e.fetchOrigin(ctx, path, url); err != nil {
+			return fmt.Errorf("fetch: %w", err)
+		}
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return fmt.Errorf("stat target: %w", err)
+	}
+	return e.cloneFresh(ctx, repo, path, url)
+}
+
+// cloneFresh clones the repository into path and immediately replaces the
+// token-bearing URL git stores with the credential-free one, so a fresh clone
+// does not keep a live credential on the backup volume.
+func (e *BackupEngine) cloneFresh(ctx context.Context, repo model.Repo, path, url string) error {
+	if err := e.runGit(ctx, []string{"clone", "--bare", url, path}, ""); err != nil {
+		return fmt.Errorf("clone: %w", err)
+	}
+	return e.ensureOrigin(ctx, path, repo.Owner, repo.Name)
 }
 
 // activePath returns the absolute path for a bare clone backup.
@@ -123,101 +245,190 @@ func (e *BackupEngine) gitOutput(ctx context.Context, args []string, dir string)
 	return outStr, nil
 }
 
-// CloneRepo clones a repository as a bare repo or fetches it if it already
-// exists.
-func (e *BackupEngine) CloneRepo(ctx context.Context, repo model.Repo) error {
-	url, err := e.authURL(ctx, repo.Owner, repo.Name)
-	if err != nil {
-		return fmt.Errorf("backup: clone %s/%s: %w", repo.Owner, repo.Name, err)
+// Backup brings a repository's local copy up to date and reports whether data
+// was transferred. mode selects how hard it works to notice a change; a copy
+// that is already current costs no git work beyond an optional ref comparison.
+func (e *BackupEngine) Backup(ctx context.Context, repo model.Repo, mode BackupMode) (bool, error) {
+	var path string
+	switch repo.Format {
+	case model.FormatClone:
+		path = e.activePath(repo.Owner, repo.Name)
+	case model.FormatBundle:
+		path = e.archivedPath(repo.Owner, repo.Name)
+	default:
+		return false, fmt.Errorf("backup: %s/%s: unknown format %q", repo.Owner, repo.Name, repo.Format)
 	}
 
+	info, statErr := os.Stat(path)
+	switch {
+	case statErr != nil && !os.IsNotExist(statErr):
+		return false, fmt.Errorf("backup: %s/%s: stat %s: %w", repo.Owner, repo.Name, path, statErr)
+	case statErr == nil && copyUsable(repo.Format, path, info) && !e.sourceChanged(ctx, repo, path, mode):
+		return false, e.recordChecked(repo)
+	}
+
+	if repo.Format == model.FormatBundle {
+		if err := e.refreshBundle(ctx, repo); err != nil {
+			return false, err
+		}
+	} else {
+		if err := e.cloneRepo(ctx, repo); err != nil {
+			return false, err
+		}
+	}
+	return true, e.recordCopied(repo)
+}
+
+// copyUsable reports whether the file at path has the shape of a complete copy:
+// a bare clone directory with a HEAD, or a non-empty bundle file. A leftover
+// from a crash must not be trusted just because a path exists, or the skip path
+// would report a broken backup as current instead of rebuilding it.
+func copyUsable(format model.RepoFormat, path string, info os.FileInfo) bool {
+	if format == model.FormatBundle {
+		return !info.IsDir() && info.Size() > 0
+	}
+	if !info.IsDir() {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(path, "HEAD"))
+	return err == nil
+}
+
+// sourceChanged reports whether the local copy needs refreshing.
+func (e *BackupEngine) sourceChanged(ctx context.Context, repo model.Repo, path string, mode BackupMode) bool {
+	if mode == BackupIfChanged {
+		// Cheap signal: the pushed_at this copy represents against the one
+		// sync last saw.
+		return !copyIsCurrent(repo)
+	}
+
+	// Reliable signal: ask the remote for its refs. A failed comparison means
+	// "assume changed": copying is cheaper than silently skipping a backup.
+	differ, err := e.refsDiffer(ctx, repo, path)
+	if err != nil {
+		slog.Warn("backup: ref comparison failed, copying anyway", "owner", repo.Owner, "name", repo.Name, "error", err)
+		return true
+	}
+	return differ
+}
+
+// copyIsCurrent reports whether the local copy represents the pushed_at that
+// sync last saw. Absent timestamps on both sides mean GitHub reports no push
+// ever, and a copy of an empty repository is still current.
+func copyIsCurrent(repo model.Repo) bool {
+	if repo.SourcePushedAt == nil || repo.LastPush == nil {
+		return repo.SourcePushedAt == nil && repo.LastPush == nil
+	}
+	return repo.SourcePushedAt.Equal(*repo.LastPush)
+}
+
+// recordChecked stores that the local copy was compared against the remote and
+// needed no work, keeping last_backup meaningful for the dashboard.
+func (e *BackupEngine) recordChecked(repo model.Repo) error {
+	now := time.Now().UTC()
+	if err := e.repos.SetLastBackup(repo.ID, &now); err != nil {
+		return fmt.Errorf("backup: %s/%s: set last backup: %w", repo.Owner, repo.Name, err)
+	}
+	if !copyIsCurrent(repo) {
+		if err := e.repos.SetSourcePushedAt(repo.ID, repo.LastPush); err != nil {
+			return fmt.Errorf("backup: %s/%s: set source pushed_at: %w", repo.Owner, repo.Name, err)
+		}
+	}
+	slog.Info("backup: copy already current, nothing to do", "owner", repo.Owner, "name", repo.Name)
+	return nil
+}
+
+// recordCopied stores the source pushed_at the new copy represents.
+func (e *BackupEngine) recordCopied(repo model.Repo) error {
+	now := time.Now().UTC()
+	if err := e.repos.SetLastBackup(repo.ID, &now); err != nil {
+		return fmt.Errorf("backup: %s/%s: set last backup: %w", repo.Owner, repo.Name, err)
+	}
+	if err := e.repos.SetSourcePushedAt(repo.ID, repo.LastPush); err != nil {
+		return fmt.Errorf("backup: %s/%s: set source pushed_at: %w", repo.Owner, repo.Name, err)
+	}
+	return nil
+}
+
+// refsDiffer reports whether the remote advertises refs the local copy does not
+// represent. Local-only refs are ignored: fetch prunes deleted branches, and a
+// stale tag is harmless history, so flagging either would copy the repository
+// on every run.
+func (e *BackupEngine) refsDiffer(ctx context.Context, repo model.Repo, path string) (bool, error) {
+	url, err := e.authURL(ctx, repo.Owner, repo.Name)
+	if err != nil {
+		return false, err
+	}
+
+	remoteOut, err := e.gitOutput(ctx, []string{"ls-remote", "--heads", "--tags", url}, "")
+	if err != nil {
+		return false, fmt.Errorf("ls-remote: %w", err)
+	}
+
+	var localOut string
+	if repo.Format == model.FormatBundle {
+		localOut, err = e.gitOutput(ctx, []string{"bundle", "list-heads", path}, "")
+	} else {
+		localOut, err = e.gitOutput(ctx, []string{
+			"--git-dir=" + path, "for-each-ref",
+			"--format=%(objectname) %(refname)", "refs/heads", "refs/tags",
+		}, "")
+	}
+	if err != nil {
+		return false, fmt.Errorf("read local refs: %w", err)
+	}
+
+	local := parseRefs(localOut)
+	for ref, sha := range parseRefs(remoteOut) {
+		if local[ref] != sha {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// parseRefs maps branch and tag names to object names, ignoring HEAD, peeled
+// tag entries (refs/tags/v1^{}) and remote-tracking refs so that ls-remote,
+// for-each-ref and bundle output can be compared directly.
+func parseRefs(out string) map[string]string {
+	refs := make(map[string]string)
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		sha, ref := fields[0], fields[1]
+		if strings.HasSuffix(ref, "^{}") {
+			continue
+		}
+		if !strings.HasPrefix(ref, "refs/heads/") && !strings.HasPrefix(ref, "refs/tags/") {
+			continue
+		}
+		refs[ref] = sha
+	}
+	return refs
+}
+
+// cloneRepo clones or fetches the bare clone and clears the verified flag,
+// because the copy may have changed.
+func (e *BackupEngine) cloneRepo(ctx context.Context, repo model.Repo) error {
 	target := e.activePath(repo.Owner, repo.Name)
 	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 		return fmt.Errorf("backup: clone %s/%s: create dir: %w", repo.Owner, repo.Name, err)
 	}
-
-	info, err := os.Stat(target)
-	if err == nil {
-		if !info.IsDir() {
-			return fmt.Errorf("backup: clone %s/%s: target exists but is not a directory", repo.Owner, repo.Name)
-		}
-		// Bare repos store HEAD directly in the directory; a missing HEAD means
-		// the directory is stale and should be recloned.
-		if _, err := os.Stat(filepath.Join(target, "HEAD")); err != nil {
-			if !os.IsNotExist(err) {
-				return fmt.Errorf("backup: clone %s/%s: stat HEAD: %w", repo.Owner, repo.Name, err)
-			}
-			slog.Warn("backup: target directory missing HEAD, removing stale clone", "owner", repo.Owner, "name", repo.Name)
-			if err := os.RemoveAll(target); err != nil {
-				return fmt.Errorf("backup: clone %s/%s: remove stale clone: %w", repo.Owner, repo.Name, err)
-			}
-		} else {
-			// The origin remote was written by a previous clone and embeds the
-			// token that was valid back then (git persists it in the bare
-			// repo's config). Refresh it with the current token so that token
-			// rotation applies to existing clones instead of failing every
-			// fetch with the stale one.
-			if err := e.runGit(ctx, []string{"--git-dir=" + target, "remote", "set-url", "origin", url}, ""); err != nil {
-				return fmt.Errorf("backup: clone %s/%s: set origin: %w", repo.Owner, repo.Name, err)
-			}
-			if err := e.runGit(ctx, []string{"--git-dir=" + target, "fetch", "--prune", "origin"}, ""); err != nil {
-				slog.Error("backup: fetch failed", "owner", repo.Owner, "name", repo.Name, "error", err)
-				return fmt.Errorf("backup: clone %s/%s: %w", repo.Owner, repo.Name, err)
-			}
-			slog.Info("backup: fetch succeeded", "owner", repo.Owner, "name", repo.Name)
-			if err := e.repos.SetVerified(repo.ID, nil); err != nil {
-				slog.Error("backup: clear verified_at", "repo", repo.Name, "error", err)
-			}
-			return nil
-		}
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("backup: clone %s/%s: stat target: %w", repo.Owner, repo.Name, err)
-	}
-
-	if err := e.runGit(ctx, []string{"clone", "--bare", url, target}, ""); err != nil {
-		slog.Error("backup: clone failed", "owner", repo.Owner, "name", repo.Name, "error", err)
+	if err := e.ensureClone(ctx, repo, target); err != nil {
+		slog.Error("backup: clone or fetch failed", "owner", repo.Owner, "name", repo.Name, "error", err)
 		return fmt.Errorf("backup: clone %s/%s: %w", repo.Owner, repo.Name, err)
 	}
-	slog.Info("backup: clone succeeded", "owner", repo.Owner, "name", repo.Name)
+	slog.Info("backup: clone or fetch succeeded", "owner", repo.Owner, "name", repo.Name)
 	if err := e.repos.SetVerified(repo.ID, nil); err != nil {
 		slog.Error("backup: clear verified_at", "repo", repo.Name, "error", err)
 	}
 	return nil
 }
 
-// FetchRepo fetches the latest state into an existing bare clone.
-func (e *BackupEngine) FetchRepo(ctx context.Context, repo model.Repo) error {
-	url, err := e.authURL(ctx, repo.Owner, repo.Name)
-	if err != nil {
-		return fmt.Errorf("backup: fetch %s/%s: %w", repo.Owner, repo.Name, err)
-	}
-
-	target := e.activePath(repo.Owner, repo.Name)
-	info, err := os.Stat(target)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("backup: fetch %s/%s: repo not found", repo.Owner, repo.Name)
-		}
-		return fmt.Errorf("backup: fetch %s/%s: stat target: %w", repo.Owner, repo.Name, err)
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("backup: fetch %s/%s: target is not a directory", repo.Owner, repo.Name)
-	}
-
-	// Refresh origin credentials with the current token (see CloneRepo).
-	if err := e.runGit(ctx, []string{"--git-dir=" + target, "remote", "set-url", "origin", url}, ""); err != nil {
-		return fmt.Errorf("backup: fetch %s/%s: set origin: %w", repo.Owner, repo.Name, err)
-	}
-
-	if err := e.runGit(ctx, []string{"--git-dir=" + target, "fetch", "--prune", "origin"}, ""); err != nil {
-		return fmt.Errorf("backup: fetch %s/%s: %w", repo.Owner, repo.Name, err)
-	}
-	return nil
-}
-
-// createBundle writes a bundle file for the given repository.
-func (e *BackupEngine) createBundle(ctx context.Context, repo model.Repo, target string) error {
-	source := e.activePath(repo.Owner, repo.Name)
+// createBundle writes a bundle of every ref in source to target.
+func (e *BackupEngine) createBundle(ctx context.Context, source, target string) error {
 	info, err := os.Stat(source)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -239,18 +450,82 @@ func (e *BackupEngine) createBundle(ctx context.Context, repo model.Repo, target
 	return nil
 }
 
-// CreateBundle creates a bundle from the active bare clone.
-func (e *BackupEngine) CreateBundle(ctx context.Context, repo model.Repo) error {
-	target := e.archivedPath(repo.Owner, repo.Name)
-	if err := e.createBundle(ctx, repo, target); err != nil {
-		return fmt.Errorf("backup: create bundle %s/%s: %w", repo.Owner, repo.Name, err)
+// refreshBundle rebuilds a bundle from GitHub and promotes it atomically. A
+// bare clone is scratch space only: a bundle-format repository is cold storage
+// and keeps a single, credential-free copy on disk.
+func (e *BackupEngine) refreshBundle(ctx context.Context, repo model.Repo) error {
+	owner, name := repo.Owner, repo.Name
+	final := e.archivedPath(owner, name)
+	temp := filepath.Join(filepath.Dir(final), fmt.Sprintf(".%s.%d.tmp", name, time.Now().UnixNano()))
+
+	if err := os.MkdirAll(filepath.Dir(final), 0755); err != nil {
+		return fmt.Errorf("backup: bundle %s/%s: create dir: %w", owner, name, err)
 	}
-	slog.Info("backup: bundle created", "owner", repo.Owner, "name", repo.Name)
-	if err := e.repos.SetVerified(repo.ID, nil); err != nil {
-		slog.Error("backup: clear verified_at", "repo", repo.Name, "error", err)
+
+	// Reuse a clone left over from an earlier format switch instead of
+	// downloading the repository again; otherwise work in a scratch directory.
+	scratch := e.activePath(owner, name)
+	reused := false
+	if info, err := os.Stat(scratch); err == nil && info.IsDir() {
+		reused = true
+	} else {
+		scratch = filepath.Join(filepath.Dir(scratch), fmt.Sprintf(".%s.%d.tmp", name, time.Now().UnixNano()))
+	}
+	if !reused {
+		if err := os.MkdirAll(filepath.Dir(scratch), 0755); err != nil {
+			return fmt.Errorf("backup: bundle %s/%s: create scratch dir: %w", owner, name, err)
+		}
+	}
+
+	promoted := false
+	defer func() {
+		if err := os.Remove(temp); err != nil && !os.IsNotExist(err) {
+			slog.Warn("backup: remove temporary bundle", "path", temp, "error", err)
+		}
+		// A reused clone is the repository's only copy until the bundle is in
+		// place, so it is removed only after a successful promotion.
+		if !reused || promoted {
+			if err := os.RemoveAll(scratch); err != nil {
+				slog.Warn("backup: remove scratch clone", "path", scratch, "error", err)
+			}
+		}
+	}()
+
+	if err := e.ensureClone(ctx, repo, scratch); err != nil {
+		return fmt.Errorf("backup: bundle %s/%s: %w", owner, name, err)
+	}
+
+	// Step 1: check the objects we are about to archive, while they are still
+	// in the page cache from the clone or fetch.
+	if err := e.runGit(ctx, []string{"--git-dir=" + scratch, "fsck", "--no-dangling"}, ""); err != nil {
+		return fmt.Errorf("backup: bundle %s/%s: fsck: %w", owner, name, err)
+	}
+
+	// Step 2: build the bundle next to its destination.
+	if err := e.createBundle(ctx, scratch, temp); err != nil {
+		return fmt.Errorf("backup: bundle %s/%s: %w", owner, name, err)
+	}
+
+	// Step 3: prove the bundle stands alone.
+	if err := e.verifyBundle(ctx, temp); err != nil {
+		return fmt.Errorf("backup: bundle %s/%s: %w", owner, name, err)
+	}
+
+	// Step 4: promote it.
+	if err := os.Rename(temp, final); err != nil {
+		return fmt.Errorf("backup: bundle %s/%s: promote: %w", owner, name, err)
+	}
+	promoted = true
+
+	slog.Info("backup: bundle refreshed", "owner", owner, "name", name)
+	now := time.Now().UTC()
+	if err := e.repos.SetVerified(repo.ID, &now); err != nil {
+		slog.Error("backup: set verified_at", "repo", name, "error", err)
 	}
 	return nil
 }
+
+// verifyBundle checks that a bundle file is readable and self-contained.
 
 // SwitchToBundle atomically replaces a bare clone with a verified bundle.
 func (e *BackupEngine) SwitchToBundle(ctx context.Context, repo model.Repo) error {
@@ -265,7 +540,7 @@ func (e *BackupEngine) SwitchToBundle(ctx context.Context, repo model.Repo) erro
 	defer cleanup()
 
 	// Step 1: create bundle to temp path.
-	if err := e.createBundle(ctx, repo, temp); err != nil {
+	if err := e.createBundle(ctx, source, temp); err != nil {
 		return fmt.Errorf("backup: switch to bundle %s/%s step 1: %w", owner, name, err)
 	}
 
@@ -361,13 +636,14 @@ func (e *BackupEngine) SwitchToClone(ctx context.Context, repo model.Repo) error
 		return fmt.Errorf("backup: switch to clone %s/%s step 2: %w", owner, name, err)
 	}
 
-	// Step 3: point origin at the live GitHub remote.
-	if err := e.runGit(ctx, []string{"--git-dir=" + temp, "remote", "set-url", "origin", authURL}, ""); err != nil {
+	// Step 3: point origin at the credential-free remote and fetch the latest
+	// refs, supplying the authenticated URL for this run only.
+	if err := e.ensureOrigin(ctx, temp, owner, name); err != nil {
 		return fmt.Errorf("backup: switch to clone %s/%s step 3: %w", owner, name, err)
 	}
 
 	// Step 4: fetch the latest refs from GitHub.
-	if err := e.runGit(ctx, []string{"--git-dir=" + temp, "fetch", "origin", "--prune"}, ""); err != nil {
+	if err := e.fetchOrigin(ctx, temp, authURL); err != nil {
 		return fmt.Errorf("backup: switch to clone %s/%s step 4: %w", owner, name, err)
 	}
 
@@ -499,11 +775,9 @@ func (e *BackupEngine) MoveBackup(ctx context.Context, oldOwner, oldName, newOwn
 	}
 
 	if format == model.FormatClone {
-		url, err := e.authURL(ctx, newOwner, newName)
-		if err != nil {
-			return fmt.Errorf("backup: move %s/%s: %w", oldOwner, oldName, err)
-		}
-		if err := e.runGit(ctx, []string{"--git-dir=" + newPath, "remote", "set-url", "origin", url}, ""); err != nil {
+		// Repoint origin at the new repository name, keeping the stored URL
+		// credential-free.
+		if err := e.ensureOrigin(ctx, newPath, newOwner, newName); err != nil {
 			return fmt.Errorf("backup: move %s/%s: set origin: %w", oldOwner, oldName, err)
 		}
 	}
@@ -529,11 +803,36 @@ func (e *BackupEngine) RemoveLocal(owner, name string) error {
 	return nil
 }
 
+// scrubStoredToken removes a token that an earlier version wrote into a
+// clone's remote URL. Git stores remote URLs verbatim, so every clone used to
+// carry a live credential in plaintext. Reading the config first means an
+// already-clean clone costs one file read and no git process.
+func (e *BackupEngine) scrubStoredToken(ctx context.Context, repo model.Repo) {
+	path := e.activePath(repo.Owner, repo.Name)
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return
+	}
+	cfg, err := os.ReadFile(filepath.Join(path, "config"))
+	if err != nil {
+		return
+	}
+	if !strings.Contains(string(cfg), "x-access-token:") {
+		return
+	}
+	if err := e.ensureOrigin(ctx, path, repo.Owner, repo.Name); err != nil {
+		slog.Warn("backup: remove stored credential failed", "owner", repo.Owner, "name", repo.Name, "error", err)
+		return
+	}
+	slog.Info("backup: removed stored credential from clone config", "owner", repo.Owner, "name", repo.Name)
+}
+
 // Reconcile resets stored backup state for repos whose backup files are
 // missing from disk — e.g. after a dataset restore, manual deletion, or disk
 // loss. It deletes nothing and clones nothing: the next backup run re-creates
-// missing copies (CloneRepo already handles absent targets), and the dashboard
-// reflects the true on-disk state in the meantime instead of stale dates.
+// missing copies (Backup always copies when the file is absent), and the
+// dashboard reflects the true on-disk state in the meantime instead of stale
+// dates. It also scrubs credentials left in clone configs by earlier versions.
 func (e *BackupEngine) Reconcile(ctx context.Context) error {
 	repos, err := e.repos.List()
 	if err != nil {
@@ -545,6 +844,10 @@ func (e *BackupEngine) Reconcile(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+
+		// Independent of backups: make sure no clone keeps a token in its
+		// config, even for repos that are skipped every night.
+		e.scrubStoredToken(ctx, repo)
 
 		// Only rows that claim a copy exists need checking; repos never backed
 		// up are already truthful.

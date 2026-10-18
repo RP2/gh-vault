@@ -20,6 +20,7 @@ type RepoStore interface {
 	GetByOwnerName(owner, name string) (model.Repo, error)
 	Upsert(r model.Repo) (int64, error)
 	SetLastBackup(id int64, at *time.Time) error
+	SetSourcePushedAt(id int64, at *time.Time) error
 	SetGitHubMetadata(id int64, sizeKB int64, language, url *string, archived bool, private bool, lastPush *time.Time) error
 	SetOwnerName(id int64, owner, name, url string) error
 	SetBackupPath(id int64, path string) error
@@ -33,8 +34,10 @@ type RepoStore interface {
 
 var _ RepoStore = (*reposStore)(nil)
 
-const repoColumns = "id, github_id, owner, name, format, backup_path, github_url, language, size_kb, last_push, last_backup, verified_at, github_archived, github_deleted, private, backup_enabled, created_at, updated_at"
+const repoColumns = "id, github_id, owner, name, format, backup_path, github_url, language, size_kb, last_push, last_backup, verified_at, source_pushed_at, github_archived, github_deleted, private, backup_enabled, created_at, updated_at"
 
+// repoUpsertSQL intentionally omits source_pushed_at: the backup engine owns
+// that column, and sync must not reset the watermark it records.
 const repoUpsertSQL = `INSERT INTO repos (
 	github_id, owner, name, format, backup_path, github_url, language, size_kb, last_push, github_archived, private, backup_enabled
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -57,19 +60,20 @@ type rowScanner interface {
 
 func scanRepo(s rowScanner) (model.Repo, error) {
 	var (
-		r         model.Repo
-		format    string
-		backup    sql.NullString
-		ghURL     sql.NullString
-		language  sql.NullString
-		lastPush  sql.NullTime
-		lastBk    sql.NullTime
-		verified  sql.NullTime
+		r        model.Repo
+		format   string
+		backup   sql.NullString
+		ghURL    sql.NullString
+		language sql.NullString
+		lastPush sql.NullTime
+		lastBk   sql.NullTime
+		verified sql.NullTime
+		srcPush  sql.NullTime
 	)
 	if err := s.Scan(
 		&r.ID, &r.GitHubID, &r.Owner, &r.Name, &format,
 		&backup, &ghURL, &language, &r.SizeKB,
-		&lastPush, &lastBk, &verified,
+		&lastPush, &lastBk, &verified, &srcPush,
 		&r.GitHubArchived, &r.GitHubDeleted, &r.Private, &r.BackupEnabled,
 		&r.CreatedAt, &r.UpdatedAt,
 	); err != nil {
@@ -99,6 +103,10 @@ func scanRepo(s rowScanner) (model.Repo, error) {
 	if verified.Valid {
 		t := verified.Time
 		r.VerifiedAt = &t
+	}
+	if srcPush.Valid {
+		t := srcPush.Time
+		r.SourcePushedAt = &t
 	}
 	return r, nil
 }
@@ -375,6 +383,21 @@ func (s *reposStore) SetBackupEnabled(id int64, enabled bool) error {
 	result, err := s.db.Exec("UPDATE repos SET backup_enabled = ? WHERE id = ?", enabled, id)
 	if err != nil {
 		return fmt.Errorf("store: set backup enabled %d: %w", id, err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetSourcePushedAt records the GitHub pushed_at value the local copy
+// represents, or clears it (nil) when the copy no longer matches any known
+// remote state.
+func (s *reposStore) SetSourcePushedAt(id int64, at *time.Time) error {
+	result, err := s.db.Exec("UPDATE repos SET source_pushed_at = ? WHERE id = ?", nullTimeValue(at), id)
+	if err != nil {
+		return fmt.Errorf("store: set source pushed_at for %d: %w", id, err)
 	}
 	n, _ := result.RowsAffected()
 	if n == 0 {

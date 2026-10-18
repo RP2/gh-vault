@@ -120,7 +120,9 @@ Keep these on separate datasets. This lets you snapshot and retain them independ
 
 **Bare clone** (`active/owner/name.git`): A full mirror of the repo. Supports incremental `fetch`. This is the default for new repos.
 
-**Git bundle** (`archived/owner/name.bundle`): A single file containing the full repo history. Good for offline storage. Use the dashboard to switch a repo from clone to bundle.
+**Git bundle** (`archived/owner/name.bundle`): A single file containing the full repo history. Good for offline storage. Use the dashboard to switch a repo from clone to bundle. A bundle-format repo keeps no clone on disk: updates clone into a scratch directory, build and verify the bundle, then delete the clone. Cold storage costs one copy.
+
+Neither format stores your GitHub token. The authenticated remote URL is passed to git for single commands, and every clone's stored `origin` is the credential-free `https://github.com/owner/name.git`.
 
 ## GitHub Token
 
@@ -128,9 +130,11 @@ gh-vault encrypts your GitHub token and stores it in SQLite. You set the token t
 
 **Required scopes:**
 - Classic PAT: `repo`
-- Fine-grained PAT: `contents:read` + `metadata:read`
+- Fine-grained PAT: `contents:read` + `metadata:read` (recommended: read-only, with an expiry)
 
-**Token rotation:** Go to Settings and enter a new token. The change applies immediately. No container restart needed.
+Use the fine-grained read-only token. It makes writes to GitHub impossible at the credential layer, so no bug in gh-vault can push, delete a branch, or force-push. Classic `repo` grants read *and* write to every repository the account can reach.
+
+**Token rotation:** Go to Settings and enter a new token, then delete the old token on GitHub. Entering a new token does not revoke the previous one. The change applies immediately, with no container restart.
 
 **If you lose the encryption key:** You must re-enter your GitHub token. The encrypted data cannot be recovered without the key. The key lives in the `/config` dataset. Save this dataset to preserve the key.
 
@@ -165,12 +169,15 @@ Sync calls the GitHub API to reconcile your local repo list. It adds new repos, 
 
 Backup runs `git clone` or `git fetch` to download repository contents. It runs on all repos with backup enabled. Repos added by sync are enabled as bare clones automatically, so only an explicit choice is needed: switch a repo to bundle format, or disable it to keep it out of backups.
 
+Backups are change-driven. Every run compares the GitHub `pushed_at` recorded with the local copy against the `pushed_at` sync last saw; if they match, the repo is left alone and costs no git work at all. The weekly sweep compares refs against GitHub instead, so pushes that do not move `pushed_at` (tag-only pushes) are still copied. When a bundle-format repo does change, the new bundle is built next to the old one, verified, and renamed into place, and the scratch clone is deleted.
+
 All times are container-local. Set `TZ` to your timezone so schedules and timestamps match your clock; without it everything runs on UTC.
 
 | Job | Schedule | What It Does |
 |---|---|---|
 | sync | Configurable (default: daily 23:00) | Fetches repo list from GitHub. Detects new, renamed, transferred, and deleted repos. |
-| backup | Daily at 23:30 | Clones or fetches all repos with backup enabled. Up to 3 concurrent. |
+| backup | Daily at 23:30 | Copies repos whose recorded `pushed_at` changed. Up to 3 concurrent. |
+| backup_sweep | Weekly (Sunday 03:00) | Compares refs against GitHub for every repo, catching changes `pushed_at` misses. |
 | verify | Weekly (Sunday 04:00) | Runs `git fsck` on clones and `git bundle verify` on bundles. |
 | log_cleanup | Daily at 05:00 | Deletes logs older than your retention setting. |
 | session_cleanup | Daily at 04:45 | Deletes expired sessions. |

@@ -153,6 +153,349 @@ func mustGit(t *testing.T, engine *BackupEngine, args ...string) {
 	}
 }
 
+func TestCopyIsCurrent(t *testing.T) {
+	pushed := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	other := pushed.Add(time.Hour)
+
+	tests := []struct {
+		name string
+		repo model.Repo
+		want bool
+	}{
+		{name: "equal timestamps are current", repo: model.Repo{LastPush: &pushed, SourcePushedAt: &pushed}, want: true},
+		{name: "newer push is not current", repo: model.Repo{LastPush: &other, SourcePushedAt: &pushed}, want: false},
+		{name: "unrecorded copy is not current", repo: model.Repo{LastPush: &pushed}, want: false},
+		{name: "repo with no push ever is current", repo: model.Repo{}, want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := copyIsCurrent(tc.repo); got != tc.want {
+				t.Errorf("copyIsCurrent() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseRefs(t *testing.T) {
+	out := strings.Join([]string{
+		"1111111111111111111111111111111111111111\tHEAD",
+		"2222222222222222222222222222222222222222\trefs/heads/main",
+		"3333333333333333333333333333333333333333\trefs/remotes/origin/main",
+		"4444444444444444444444444444444444444444\trefs/tags/v1.0.0",
+		"5555555555555555555555555555555555555555\trefs/tags/v1.0.0^{}",
+	}, "\n")
+
+	got := parseRefs(out)
+	want := map[string]string{
+		"refs/heads/main":  "2222222222222222222222222222222222222222",
+		"refs/tags/v1.0.0": "4444444444444444444444444444444444444444",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("parseRefs() = %v, want %v", got, want)
+	}
+	for ref, sha := range want {
+		if got[ref] != sha {
+			t.Errorf("parseRefs()[%q] = %q, want %q", ref, got[ref], sha)
+		}
+	}
+}
+
+func TestBackupSkipsUnchangedCopy(t *testing.T) {
+	engine, db := newReconcileTestEngine(t)
+	engine.tokenProvider = noTokenProvider{}
+	repos := db.Repos()
+
+	pushed := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	id, err := repos.Upsert(model.Repo{
+		GitHubID:      21,
+		Owner:         "RP2",
+		Name:          "idle",
+		Format:        model.FormatClone,
+		BackupEnabled: true,
+		LastPush:      &pushed,
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := repos.SetSourcePushedAt(id, &pushed); err != nil {
+		t.Fatalf("set source pushed_at: %v", err)
+	}
+	cloneDir := engine.activePath("RP2", "idle")
+	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+		t.Fatalf("mkdir clone: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cloneDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatalf("write HEAD: %v", err)
+	}
+
+	repo, err := repos.Get(id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	// The engine holds no token: any git work fails instead of reaching the
+	// network, so a clean skip proves no git command ran.
+	changed, err := engine.Backup(context.Background(), repo, BackupIfChanged)
+	if err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+	if changed {
+		t.Error("changed = true, want false for a copy already at the pushed_at GitHub reports")
+	}
+
+	stored, err := repos.Get(id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if stored.LastBackup == nil {
+		t.Error("LastBackup = nil, want the check timestamp recorded")
+	}
+}
+
+// noTokenProvider supplies no credentials, so any path that needs GitHub fails
+// fast instead of reaching the network.
+type noTokenProvider struct{}
+
+func (noTokenProvider) GetToken(context.Context) (string, error) { return "", nil }
+func (noTokenProvider) SetToken(context.Context, string) error   { return nil }
+func (noTokenProvider) Wipe()                                    {}
+
+// TestBackupRebuildsIncompleteCopy covers the self-healing path: a clone left
+// without a HEAD by an interrupted run must not be reported as a current copy
+// just because the directory exists, even when the recorded pushed_at matches.
+func TestBackupRebuildsIncompleteCopy(t *testing.T) {
+	engine, db := newReconcileTestEngine(t)
+	engine.tokenProvider = noTokenProvider{}
+	repos := db.Repos()
+
+	pushed := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	id, err := repos.Upsert(model.Repo{
+		GitHubID:      22,
+		Owner:         "RP2",
+		Name:          "truncated",
+		Format:        model.FormatClone,
+		BackupEnabled: true,
+		LastPush:      &pushed,
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := repos.SetSourcePushedAt(id, &pushed); err != nil {
+		t.Fatalf("set source pushed_at: %v", err)
+	}
+	// A clone directory with no HEAD, as an interrupted clone leaves behind.
+	if err := os.MkdirAll(engine.activePath("RP2", "truncated"), 0o755); err != nil {
+		t.Fatalf("mkdir clone: %v", err)
+	}
+
+	repo, err := repos.Get(id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	// No usable copy: the engine must try to copy, and with no token that
+	// attempt fails. A nil error would mean the broken copy was skipped.
+	if _, err := engine.Backup(context.Background(), repo, BackupIfChanged); err == nil {
+		t.Error("backup of an incomplete clone succeeded, want an attempt to copy")
+	}
+}
+
+// TestReconcileScrubsStoredToken covers upgrade hygiene: clone configs written
+// by an earlier version carried the token, and idle repos never fetch, so the
+// scrub cannot wait for a copy to happen.
+func TestReconcileScrubsStoredToken(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	engine, db := newReconcileTestEngine(t)
+	repos := db.Repos()
+	id, err := repos.Upsert(model.Repo{
+		GitHubID:      31,
+		Owner:         "RP2",
+		Name:          "leaky",
+		Format:        model.FormatClone,
+		BackupEnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	now := time.Now()
+	if err := repos.SetLastBackup(id, &now); err != nil {
+		t.Fatalf("set last backup: %v", err)
+	}
+
+	clone := engine.activePath("RP2", "leaky")
+	mustGit(t, engine, "init", "--bare", "--quiet", clone)
+	mustGit(t, engine, "--git-dir="+clone, "remote", "add", "origin",
+		"https://x-access-token:ghp_EXAMPLE@github.com/RP2/leaky.git")
+
+	if err := engine.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	cfg, err := os.ReadFile(filepath.Join(clone, "config"))
+	if err != nil {
+		t.Fatalf("read clone config: %v", err)
+	}
+	if strings.Contains(string(cfg), "x-access-token") {
+		t.Errorf("clone config still holds a credential:\n%s", cfg)
+	}
+	want := "url = " + plainURL("RP2", "leaky")
+	if !strings.Contains(string(cfg), want) {
+		t.Errorf("clone config missing %q:\n%s", want, cfg)
+	}
+}
+
+func TestCopyUsable(t *testing.T) {
+	dir := t.TempDir()
+
+	bare := filepath.Join(dir, "clone.git")
+	if err := os.MkdirAll(bare, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	info, err := os.Stat(bare)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if copyUsable(model.FormatClone, bare, info) {
+		t.Error("clone without HEAD reported usable")
+	}
+	if err := os.WriteFile(filepath.Join(bare, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatalf("write HEAD: %v", err)
+	}
+	if !copyUsable(model.FormatClone, bare, info) {
+		t.Error("clone with HEAD reported unusable")
+	}
+
+	empty := filepath.Join(dir, "empty.bundle")
+	if err := os.WriteFile(empty, nil, 0o644); err != nil {
+		t.Fatalf("write bundle: %v", err)
+	}
+	info, err = os.Stat(empty)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if copyUsable(model.FormatBundle, empty, info) {
+		t.Error("empty bundle reported usable")
+	}
+	if err := os.WriteFile(empty, []byte("# v2 git bundle\n"), 0o644); err != nil {
+		t.Fatalf("write bundle: %v", err)
+	}
+	info, err = os.Stat(empty)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if !copyUsable(model.FormatBundle, empty, info) {
+		t.Error("non-empty bundle reported unusable")
+	}
+}
+
+// TestFetchOriginCopiesLatestRefs exercises the real fetch path against a local
+// remote: the authenticated URL is passed per invocation, so a clone whose
+// stored origin is the credential-free URL still updates.
+func TestFetchOriginCopiesLatestRefs(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	engine, _ := newReconcileTestEngine(t)
+	ctx := context.Background()
+
+	work := filepath.Join(t.TempDir(), "work")
+	mustGit(t, engine, "init", "--quiet", work)
+	mustGit(t, engine, "-C", work,
+		"-c", "user.email=test@example.com", "-c", "user.name=test",
+		"commit", "--quiet", "--allow-empty", "-m", "one")
+	mustGit(t, engine, "-C", work, "tag", "v1")
+
+	local := filepath.Join(t.TempDir(), "local.git")
+	mustGit(t, engine, "clone", "--quiet", "--bare", work, local)
+	mustGit(t, engine, "--git-dir="+local, "remote", "set-url", "origin", plainURL("RP2", "link-index"))
+
+	mustGit(t, engine, "-C", work,
+		"-c", "user.email=test@example.com", "-c", "user.name=test",
+		"commit", "--quiet", "--allow-empty", "-m", "two")
+
+	if err := engine.fetchOrigin(ctx, local, work); err != nil {
+		t.Fatalf("fetch origin: %v", err)
+	}
+
+	fetched, err := engine.gitOutput(ctx, []string{"--git-dir=" + local, "rev-parse", "refs/heads/main"}, "")
+	if err != nil {
+		t.Fatalf("read fetched ref: %v", err)
+	}
+	want, err := engine.gitOutput(ctx, []string{"-C", work, "rev-parse", "refs/heads/main"}, "")
+	if err != nil {
+		t.Fatalf("read work ref: %v", err)
+	}
+	if fetched != want {
+		t.Errorf("fetched main = %s, want %s", fetched, want)
+	}
+
+	origin, err := engine.gitOutput(ctx, []string{"--git-dir=" + local, "remote", "get-url", "origin"}, "")
+	if err != nil {
+		t.Fatalf("read origin: %v", err)
+	}
+	if strings.Contains(origin, "x-access-token") {
+		t.Errorf("origin = %q, want no credentials after a fetch", origin)
+	}
+}
+
+// TestEnsureOriginScrubsToken guards the credential-free clone config: a token
+// stored by an earlier version must be replaced by the plain URL.
+func TestEnsureOriginScrubsToken(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	engine, _ := newReconcileTestEngine(t)
+	dir := filepath.Join(t.TempDir(), "clone.git")
+	mustGit(t, engine, "init", "--bare", "--quiet", dir)
+	mustGit(t, engine, "--git-dir="+dir, "remote", "add", "origin",
+		"https://x-access-token:ghp_EXAMPLE@github.com/RP2/link-index.git")
+
+	if err := engine.ensureOrigin(context.Background(), dir, "RP2", "link-index"); err != nil {
+		t.Fatalf("ensure origin: %v", err)
+	}
+
+	out, err := engine.gitOutput(context.Background(), []string{"--git-dir=" + dir, "remote", "get-url", "origin"}, "")
+	if err != nil {
+		t.Fatalf("read origin: %v", err)
+	}
+	if strings.Contains(out, "ghp_EXAMPLE") || strings.Contains(out, "x-access-token") {
+		t.Errorf("origin = %q, want no credentials stored", out)
+	}
+	want := "https://github.com/RP2/link-index.git"
+	if out != want {
+		t.Errorf("origin = %q, want %q", out, want)
+	}
+}
+
+// TestEnsureOriginAddsMissingRemote covers clones with no origin at all, which
+// fetch would otherwise fail on.
+func TestEnsureOriginAddsMissingRemote(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	engine, _ := newReconcileTestEngine(t)
+	dir := filepath.Join(t.TempDir(), "clone.git")
+	mustGit(t, engine, "init", "--bare", "--quiet", dir)
+
+	if err := engine.ensureOrigin(context.Background(), dir, "RP2", "link-index"); err != nil {
+		t.Fatalf("ensure origin: %v", err)
+	}
+
+	out, err := engine.gitOutput(context.Background(), []string{"--git-dir=" + dir, "remote", "get-url", "origin"}, "")
+	if err != nil {
+		t.Fatalf("read origin: %v", err)
+	}
+	if out != "https://github.com/RP2/link-index.git" {
+		t.Errorf("origin = %q, want the plain URL", out)
+	}
+}
+
 // newBundleTestRepo creates the artifacts a real bundle backup leaves behind: a
 // bare clone under active/ and a bundle created from it with --all, matching
 // createBundle.

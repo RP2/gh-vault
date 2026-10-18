@@ -22,6 +22,9 @@ type Repo struct {
 	BackupEnabled  bool       `db:"backup_enabled" json:"backup_enabled"`
 	CreatedAt      time.Time  `db:"created_at" json:"created_at"`
 	UpdatedAt      time.Time  `db:"updated_at" json:"updated_at"`
+	// SourcePushedAt is the GitHub pushed_at value the local copy represents.
+	// Equal to LastPush means the copy is current and needs no git work.
+	SourcePushedAt *time.Time `db:"source_pushed_at" json:"source_pushed_at"`
 }
 
 // RepoFormat defines the storage format for a repository backup.

@@ -87,6 +87,13 @@ const v4DDL = `ALTER TABLE repos ADD COLUMN private INTEGER NOT NULL DEFAULT 0;`
 // to force re-authentication after upgrade.
 const v5DDL = `DELETE FROM sessions;`
 
+// v6DDL records which GitHub pushed_at timestamp each local copy represents.
+// Comparing it against the pushed_at reported by sync tells the backup job
+// whether a repo changed at all, so idle repos cost no git work. NULL means
+// the copy predates this column, so the next backup treats the repo as
+// possibly changed and checks it once.
+const v6DDL = `ALTER TABLE repos ADD COLUMN source_pushed_at DATETIME;`
+
 type migration struct {
 	Version int
 	DDL     string
@@ -98,6 +105,7 @@ var migrations = []migration{
 	{Version: 3, DDL: v3DDL},
 	{Version: 4, DDL: v4DDL},
 	{Version: 5, DDL: v5DDL},
+	{Version: 6, DDL: v6DDL},
 }
 
 func runMigrations(db *sql.DB) error {

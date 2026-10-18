@@ -20,6 +20,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/oauth2"
 
+	"github.com/RP2/gh-vault/internal/backup"
 	"github.com/RP2/gh-vault/internal/model"
 	"github.com/RP2/gh-vault/internal/store"
 	syncpkg "github.com/RP2/gh-vault/internal/sync"
@@ -660,29 +661,19 @@ func (s *Server) handleBackupChecked(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			if r.Format == model.FormatBundle {
-				if err := s.engine.CloneRepo(ctx, r); err != nil {
-					slog.Error("backup checked", "repo", r.Name, "error", err)
-					s.createLogEntry(r.ID, "backup", "error", err.Error())
-					return
-				}
-				if err := s.engine.CreateBundle(ctx, r); err != nil {
-					slog.Error("create bundle checked", "repo", r.Name, "error", err)
-					s.createLogEntry(r.ID, "backup", "error", err.Error())
-					return
-				}
+			// A manual run asks the remote for its refs: the user expects a
+			// real check, not a pushed_at comparison.
+			changed, err := s.engine.Backup(ctx, r, backup.BackupVerifyRefs)
+			if err != nil {
+				slog.Error("backup checked", "repo", r.Name, "error", err)
+				s.createLogEntry(r.ID, "backup", "error", err.Error())
+				return
+			}
+			if changed {
+				s.createLogEntry(r.ID, "backup", "success", "checked backup copied changes")
 			} else {
-				if err := s.engine.CloneRepo(ctx, r); err != nil {
-					slog.Error("backup checked", "repo", r.Name, "error", err)
-					s.createLogEntry(r.ID, "backup", "error", err.Error())
-					return
-				}
+				s.createLogEntry(r.ID, "backup", "success", "checked backup: already current")
 			}
-			now := time.Now().UTC()
-			if err := s.repos.SetLastBackup(r.ID, &now); err != nil {
-				slog.Error("set last backup", "id", r.ID, "error", err)
-			}
-			s.createLogEntry(r.ID, "backup", "success", "checked backup completed")
 		}(repo.ID)
 	}
 	w.WriteHeader(http.StatusAccepted)
@@ -783,32 +774,18 @@ func (s *Server) handleTriggerBackup(w http.ResponseWriter, r *http.Request) {
 			if repo.GitHubDeleted || !repo.BackupEnabled {
 				continue
 			}
-			if repo.Format == model.FormatBundle {
-				if err := s.engine.CloneRepo(ctx, repo); err != nil {
-					slog.Error("backup repo", "owner", repo.Owner, "name", repo.Name, "error", err)
-					s.createLogEntry(repo.ID, "backup", "error", err.Error())
-					failed++
-					continue
-				}
-				if err := s.engine.CreateBundle(ctx, repo); err != nil {
-					slog.Error("create bundle", "owner", repo.Owner, "name", repo.Name, "error", err)
-					s.createLogEntry(repo.ID, "backup", "error", err.Error())
-					failed++
-					continue
-				}
+			changed, err := s.engine.Backup(ctx, repo, backup.BackupVerifyRefs)
+			if err != nil {
+				slog.Error("backup repo", "owner", repo.Owner, "name", repo.Name, "error", err)
+				s.createLogEntry(repo.ID, "backup", "error", err.Error())
+				failed++
+				continue
+			}
+			if changed {
+				s.createLogEntry(repo.ID, "backup", "success", "triggered backup copied changes")
 			} else {
-				if err := s.engine.CloneRepo(ctx, repo); err != nil {
-					slog.Error("backup repo", "owner", repo.Owner, "name", repo.Name, "error", err)
-					s.createLogEntry(repo.ID, "backup", "error", err.Error())
-					failed++
-					continue
-				}
+				s.createLogEntry(repo.ID, "backup", "success", "triggered backup: already current")
 			}
-			now := time.Now().UTC()
-			if err := s.repos.SetLastBackup(repo.ID, &now); err != nil {
-				slog.Error("set last backup", "id", repo.ID, "error", err)
-			}
-			s.createLogEntry(repo.ID, "backup", "success", "triggered backup completed")
 		}
 
 		if failed > 0 {

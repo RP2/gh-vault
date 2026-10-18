@@ -215,7 +215,16 @@ func (s *CronScheduler) addJobs(syncExpr string) error {
 		// large or slow (spinning-disk) collection they can take far longer
 		// than the metadata-only jobs.
 		{name: "sync", expr: syncExpr, timeout: 10 * time.Minute, fn: s.syncJob},
-		{name: "backup", expr: "30 23 * * *", timeout: 6 * time.Hour, fn: s.backupJob},
+		// Nightly run trusts GitHub's pushed_at: an idle repo costs no git
+		// work at all.
+		{name: "backup", expr: "30 23 * * *", timeout: 6 * time.Hour, fn: func(ctx context.Context) error {
+			return s.backupJob(ctx, backup.BackupIfChanged)
+		}},
+		// Weekly sweep compares refs against GitHub so pushes that leave
+		// pushed_at unchanged (tag-only pushes) are still copied.
+		{name: "backup_sweep", expr: "0 3 * * 0", timeout: 6 * time.Hour, fn: func(ctx context.Context) error {
+			return s.backupJob(ctx, backup.BackupVerifyRefs)
+		}},
 		{name: "verify", expr: "0 4 * * 0", timeout: 2 * time.Hour, fn: s.verifyJob},
 		{name: "log_cleanup", expr: "0 5 * * *", timeout: 10 * time.Minute, fn: s.logCleanupJob},
 		{name: "session_cleanup", expr: "45 4 * * *", timeout: 10 * time.Minute, fn: s.sessionCleanupJob},
@@ -278,10 +287,13 @@ func (s *CronScheduler) syncJob(ctx context.Context) error {
 	return nil
 }
 
-func (s *CronScheduler) backupJob(ctx context.Context) error {
+// backupJob copies repositories whose remote content changed. mode selects the
+// change detector: the pushed_at comparison nightly, and a full ref comparison
+// on the weekly sweep so pushes that leave pushed_at alone are still caught.
+func (s *CronScheduler) backupJob(ctx context.Context, mode backup.BackupMode) error {
 	// Notice files that vanished since the last run (dataset restore, manual
-	// deletion) so stored state matches disk before cloning. Non-fatal: the
-	// clone step below re-creates missing copies regardless.
+	// deletion) so stored state matches disk before copying. Non-fatal: the
+	// copy step below re-creates missing files regardless.
 	if err := s.engine.Reconcile(ctx); err != nil {
 		slog.Error("scheduler: backup job: reconcile", "error", err)
 	}
@@ -301,6 +313,7 @@ func (s *CronScheduler) backupJob(ctx context.Context) error {
 
 	var (
 		failed int
+		copied int
 		mu     sync.Mutex
 	)
 	g, ctx := errgroup.WithContext(ctx)
@@ -308,33 +321,18 @@ func (s *CronScheduler) backupJob(ctx context.Context) error {
 	for _, r := range active {
 		r := r
 		g.Go(func() error {
-			if r.Format == model.FormatBundle {
-				if err := s.engine.CloneRepo(ctx, r); err != nil {
-					slog.Error("scheduler: backup job: clone repo", "owner", r.Owner, "name", r.Name, "error", err)
-					mu.Lock()
-					failed++
-					mu.Unlock()
-					return err
-				}
-				if err := s.engine.CreateBundle(ctx, r); err != nil {
-					slog.Error("scheduler: backup job: create bundle", "owner", r.Owner, "name", r.Name, "error", err)
-					mu.Lock()
-					failed++
-					mu.Unlock()
-					return err
-				}
-			} else {
-				if err := s.engine.CloneRepo(ctx, r); err != nil {
-					slog.Error("scheduler: backup job: clone repo", "owner", r.Owner, "name", r.Name, "error", err)
-					mu.Lock()
-					failed++
-					mu.Unlock()
-					return err
-				}
+			changed, err := s.engine.Backup(ctx, r, mode)
+			if err != nil {
+				slog.Error("scheduler: backup job: backup repo", "owner", r.Owner, "name", r.Name, "error", err)
+				mu.Lock()
+				failed++
+				mu.Unlock()
+				return err
 			}
-			now := time.Now().UTC()
-			if err := s.repos.SetLastBackup(r.ID, &now); err != nil {
-				slog.Error("cron backup: set last_backup", "repo", r.Name, "error", err)
+			if changed {
+				mu.Lock()
+				copied++
+				mu.Unlock()
 			}
 			return nil
 		})
@@ -342,7 +340,7 @@ func (s *CronScheduler) backupJob(ctx context.Context) error {
 	if err := g.Wait(); err != nil {
 		slog.Error("scheduler: backup job failed", "error", err)
 	}
-	slog.Info("scheduler: backup job completed", "repos", len(active), "failed", failed)
+	slog.Info("scheduler: backup job completed", "repos", len(active), "copied", copied, "failed", failed)
 	if failed > 0 {
 		return fmt.Errorf("%d of %d repos failed to back up", failed, len(active))
 	}
